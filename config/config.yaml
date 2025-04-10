@@ -1,0 +1,6 @@
+# JOB CONFIGURATION
+
+# data preparation
+batch_size: 64
+val_split: 0.1
+num_workers: 2
