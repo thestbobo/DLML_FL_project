@@ -4,3 +4,8 @@
 batch_size: 64
 val_split: 0.1
 num_workers: 2
+learning_rate: 0.05
+weight_decay: 5e-4
+momentum: 0.9
+t_max: 50
+epochs: 50

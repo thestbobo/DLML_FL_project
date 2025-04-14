@@ -8,13 +8,22 @@ def get_cifar100_loaders(data_dir, val_split, batch_size, num_workers):
     Downloads CIFAR-100, splits train/val/test, returns DataLoaders
 
     """
-    transform = transforms.Compose([
+    train_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762)),
+        transforms.RandomCrop(32, padding=4),  # Random crop with padding (common for CIFAR)
+        transforms.RandomHorizontalFlip(),  # Flip with 50% chance
+        transforms.ColorJitter(0.4, 0.4, 0.4, 0.1),  # Random brightness, contrast, saturation, hue
+        transforms.RandomErasing(p=0.25)
+    ])
+
+    val_transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762))
     ])
     # Load dataset
-    train_data = datasets.CIFAR100(root=data_dir, train=True, download=True, transform=transform)
-    test_data = datasets.CIFAR100(root=data_dir, train=False, download=True, transform=transform)
+    train_data = datasets.CIFAR100(root=data_dir, train=True, download=True, transform=train_transform)
+    test_data = datasets.CIFAR100(root=data_dir, train=False, download=True, transform=val_transform)
 
     # Train/val split
     val_size = int(len(train_data) * val_split)
