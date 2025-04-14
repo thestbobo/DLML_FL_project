@@ -9,6 +9,7 @@ def get_cifar100_loaders(val_split, batch_size, num_workers):
 
     """
     train_transform = transforms.Compose([
+        transforms.Resize(224),
         transforms.ToTensor(),
         transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762)),
         transforms.RandomCrop(32, padding=4),  # Random crop with padding (common for CIFAR)
@@ -18,6 +19,7 @@ def get_cifar100_loaders(val_split, batch_size, num_workers):
     ])
 
     val_transform = transforms.Compose([
+        transforms.Resize(224),
         transforms.ToTensor(),
         transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762))
     ])
