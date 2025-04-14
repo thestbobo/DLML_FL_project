@@ -12,7 +12,7 @@ def get_cifar100_loaders(val_split, batch_size, num_workers):
         transforms.Resize(224),
         transforms.ToTensor(),
         transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762)),
-        transforms.RandomCrop(32, padding=4),  # Random crop with padding (common for CIFAR)
+        # transforms.RandomCrop(32, padding=4),  # Random crop with padding (common for CIFAR)
         transforms.RandomHorizontalFlip(),  # Flip with 50% chance
         transforms.ColorJitter(0.4, 0.4, 0.4, 0.1),  # Random brightness, contrast, saturation, hue
         transforms.RandomErasing(p=0.25)
