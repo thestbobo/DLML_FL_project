@@ -3,7 +3,7 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, random_split
 
 
-def get_cifar100_loaders(data_dir, val_split, batch_size, num_workers):
+def get_cifar100_loaders(val_split, batch_size, num_workers):
     """
     Downloads CIFAR-100, splits train/val/test, returns DataLoaders
 
@@ -22,8 +22,8 @@ def get_cifar100_loaders(data_dir, val_split, batch_size, num_workers):
         transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762))
     ])
     # Load dataset
-    train_data = datasets.CIFAR100(root=data_dir, train=True, download=True, transform=train_transform)
-    test_data = datasets.CIFAR100(root=data_dir, train=False, download=True, transform=val_transform)
+    train_data = datasets.CIFAR100(root="/content/DLML_FL_project/data", train=True, download=True, transform=train_transform)
+    test_data = datasets.CIFAR100(root="/content/DLML_FL_project/data", train=False, download=True, transform=val_transform)
 
     # Train/val split
     val_size = int(len(train_data) * val_split)

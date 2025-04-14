@@ -25,7 +25,7 @@ wandb.init(project="CIFAR-100_centralized", config=config)
 
 # DATA
 DATA_DIR = Path("./data")
-train_loader, val_loader, test_loader = get_cifar100_loaders(config["data_dir"], config["val_split"], config["batch_size"], config["num_workers"])
+train_loader, val_loader, test_loader = get_cifar100_loaders(config["val_split"], config["batch_size"], config["num_workers"])
 
 # create validation split
 
