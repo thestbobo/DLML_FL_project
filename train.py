@@ -5,7 +5,7 @@ from data.prepare_data import get_cifar100_loaders
 import yaml
 from tqdm import tqdm
 from pathlib import Path
-from models.dino_ViT_b16 import DINO_ViT
+from models.dino_ViT_s16 import DINO_ViT
 from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
 
 # CUDA status

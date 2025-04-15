@@ -5,30 +5,23 @@ from pathlib import Path
 
 def get_cifar100_loaders(val_split=0.1, batch_size=128, num_workers=2, data_dir=None):
     """
-    Prepares CIFAR-100 loaders with ViT-optimized transforms
-    Args:
-        val_split: Fraction of training data to use for validation
-        batch_size: Batch size for all loaders
-        num_workers: Number of workers for data loading
-        data_dir: Directory to store/lookup dataset
-    Returns:
-        train_loader, val_loader, test_loader
+    Prepares CIFAR-100 loaders with DINO-specific transforms
     """
-    # ViT-S/16 optimized transforms
+    # DINO ViT-S/16 specific transforms
     train_transform = transforms.Compose([
-        transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
-        transforms.RandomResizedCrop(224, scale=(0.8, 1.0), ratio=(0.9, 1.1)),
+        transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.RandomCrop(224),
         transforms.RandomHorizontalFlip(),
         transforms.ColorJitter(0.4, 0.4, 0.4, 0.1),
         transforms.ToTensor(),
-        transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762)),
-        transforms.RandomErasing(p=0.25)
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),  # ImageNet stats
     ])
 
     val_transform = transforms.Compose([
-        transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.CenterCrop(224),
         transforms.ToTensor(),
-        transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762))
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
 
     # Set data directory
@@ -49,7 +42,7 @@ def get_cifar100_loaders(val_split=0.1, batch_size=128, num_workers=2, data_dir=
         transform=val_transform
     )
 
-    # Train/val split with fixed random seed for reproducibility
+    # Train/val split
     val_size = int(len(train_data) * val_split)
     train_size = len(train_data) - val_size
     train_set, val_set = random_split(
