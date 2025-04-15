@@ -1,12 +1,24 @@
-# JOB CONFIGURATION
+# Data Preparation
+data_dir: "./data"  # Path to store/lookup dataset
+batch_size: 64      # Reduce if memory issues occur
+val_split: 0.1      # Fraction of training data for validation
+num_workers: 2      # Increase if using more CPU cores
 
-# data preparation
-batch_size: 64
-val_split: 0.1
-num_workers: 2
-learning_rate: 0.05
-weight_decay: 0.0005
-momentum: 0.9
-t_max: 50
-epochs: 50
-data_dir:
+# Model Parameters
+unfreeze_last_block: False  # Whether to unfreeze last transformer block
+label_smoothing: 0.1        # Helps with regularization (0-0.2 recommended)
+
+# Optimizer Parameters (SGDM)
+learning_rate: 0.03         # Lowered from 0.05 for DINO fine-tuning
+weight_decay: 0.0005        # L2 regularization
+momentum: 0.9               # SGD momentum
+
+# Scheduler Parameters
+warmup_epochs: 10           # Linear warmup duration
+t_max: 50                   # Cosine annealing period
+epochs: 50                  # Total training epochs
+
+# DINO-Specific Parameters
+use_dino_norm: True         # Whether to use DINO's ImageNet normalization
+image_size: 224             # Input size for DINO ViT-S/16
+resize_size: 256 
