@@ -9,7 +9,7 @@ unfreeze_last_block: False  # Whether to unfreeze last transformer block
 label_smoothing: 0.1        # Helps with regularization (0-0.2 recommended)
 
 # Optimizer Parameters (SGDM)
-learning_rate: 0.03         # Initial learning rate
+learning_rate: 0.05         # Initial learning rate
 weight_decay: 0.0003        
 momentum: 0.9               
 
@@ -22,4 +22,4 @@ epochs: 50                  # Total training epochs
 use_dino_norm: True         # Whether to use DINO's ImageNet normalization
 image_size: 224             # Input size for DINO ViT-S/16
 resize_size: 256            # Resize CIFAR-10 images to this size
-num_classes: 10             # Number of classes in CIFAR-10
+num_classes: 100             # Number of classes in CIFAR-10
