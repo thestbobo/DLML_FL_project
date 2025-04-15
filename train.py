@@ -29,7 +29,7 @@ train_loader, val_loader, test_loader = get_cifar100_loaders(config)
 
 # Model definition with DINO ViT-S/16
 model = DINO_ViT(
-    num_classes=100,
+    num_classes=config['num_classes'],
     pretrained=True,
     unfreeze_last_block=config.get("unfreeze_last_block", False)
 ).to(device)
