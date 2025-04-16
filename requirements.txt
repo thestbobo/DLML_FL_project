@@ -2,3 +2,5 @@ torch
 torchvision
 wandb
 tqdm
+scikit-learn
+PyYAML
