@@ -1,7 +1,7 @@
 # JOB CONFIGURATION
 
 # data preparation
-batch_size: 64
+batch_size: 256
 val_split: 0.1
 num_workers: 2
 learning_rate: 0.05

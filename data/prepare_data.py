@@ -9,13 +9,15 @@ def get_cifar100_loaders(val_split, batch_size, num_workers):
 
     """
     train_transform = transforms.Compose([
-        transforms.Resize(224),
+        transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.RandomCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ColorJitter(0.4, 0.4, 0.4, 0.1),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1),
         transforms.ToTensor(),
-        transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762)),
-        # transforms.RandomCrop(32, padding=4),  # Random crop with padding (common for CIFAR)
-        transforms.RandomHorizontalFlip(),  # Flip with 50% chance
-        transforms.ColorJitter(0.4, 0.4, 0.4, 0.1),  # Random brightness, contrast, saturation, hue
-        transforms.RandomErasing(p=0.25)
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),  # ImageNet stats
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
     val_transform = transforms.Compose([
