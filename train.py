@@ -33,7 +33,7 @@ train_loader, val_loader, test_loader = get_cifar100_loaders(config["val_split"]
 # model definition
 dino = DINO_ViT()
 model = dino.model
-model = model.to(device)
+dino = model.to(device)
 criterion = nn.CrossEntropyLoss().to(device)
 optimizer = torch.optim.SGD(dino.classifier.parameters(), lr=config["learning_rate"], weight_decay=config["weight_decay"], momentum=config["momentum"])
 # scheduler = CosineAnnealingLR(optimizer=optimizer, T_max=config["t_max"])
