@@ -8,8 +8,9 @@ class DINO_ViT(nn.Module):
         super(DINO_ViT, self).__init__()
         self.model = torch.hub.load('facebookresearch/dino:main', 'dino_vits16')
         # self.model = vit_b_16(weights='DEFAULT' if pretrained else None)
-        in_features = self.model.head.in_features
+        in_features = self.model.heads.head.in_features
         self.model.heads.head = nn.Linear(in_features, num_classes)
 
     def forward(self, x):
         return self.model(x)
+
