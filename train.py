@@ -7,10 +7,12 @@ from pathlib import Path
 from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
 from models.dino_ViT_b16 import DINO_ViT
 from data.prepare_data import get_cifar100_loaders
+from project_utils.metrics import get_metrics
 
 def train_one_epoch(model, dataloader, optimizer, criterion, scaler, device, curr_epoch, verbose=False):
     model.train()
-    running_loss, correct, total = 0.0, 0, 0
+    running_loss, total = 0.0, 0
+    all_outputs, all_labels = [], []
 
     loader = tqdm(dataloader, desc=f"Train Epoch {curr_epoch}", leave=False) if verbose else dataloader
 
@@ -18,26 +20,32 @@ def train_one_epoch(model, dataloader, optimizer, criterion, scaler, device, cur
         inputs, labels = inputs.to(device), labels.to(device)
 
         optimizer.zero_grad()
+
         with torch.amp.autocast(device_type='cuda'):  # <<< AMP-enabled forward pass
             outputs = model(inputs)
             loss = criterion(outputs, labels)
+
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
 
         running_loss += loss.item() * inputs.size(0)
-        _, predicted = torch.max(outputs.data, 1)
         total += labels.size(0)
-        correct += torch.sum(predicted.eq(labels)).item()
+        all_outputs.append(outputs)
+        all_labels.append(labels)
 
     avg_loss = running_loss / total
-    accuracy = correct / total
-    return avg_loss, accuracy
+    all_outputs = torch.cat(all_outputs)
+    all_labels = torch.cat(all_labels)
+    metrics = get_metrics(all_outputs, all_labels)
+
+    return avg_loss, metrics
 
 
 def validate(model, dataloader, criterion, device, verbose=False):
     model.eval()
-    running_loss, correct, total = 0.0, 0, 0
+    running_loss, total = 0.0, 0
+    all_outputs, all_labels = [], []
 
     loader = tqdm(dataloader, desc="Validating", leave=False) if verbose else dataloader
 
@@ -49,14 +57,17 @@ def validate(model, dataloader, criterion, device, verbose=False):
             loss = criterion(outputs, labels)
 
             running_loss += loss.item() * inputs.size(0)
-            _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
-            correct += torch.sum(predicted.eq(labels)).item()
+
+            all_outputs.append(outputs)
+            all_labels.append(labels)
 
     avg_loss = running_loss / total
-    accuracy = correct / total
-    return avg_loss, accuracy
+    all_outputs = torch.cat(all_outputs)
+    all_labels = torch.cat(all_labels)
+    metrics = get_metrics(all_outputs, all_labels)
 
+    return avg_loss, metrics
 
 
 def main():
@@ -94,19 +105,20 @@ def main():
     best_val_accuracy = 0.0
 
     for epoch in range(config["epochs"]):
-        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, scaler, device, epoch + 1, verbose=True)
-        val_loss, val_acc = validate(model, val_loader, criterion, device, verbose=True)
+        train_loss, train_metrics = train_one_epoch(model, train_loader, optimizer, criterion, scaler, device, epoch + 1, verbose=True)
+        val_loss, val_metrics = validate(model, val_loader, criterion, device, verbose=True)
         scheduler.step()
 
         print(
-            f"Epoch {epoch + 1}/{config['epochs']} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f} | Val Acc: {val_loss:.4f}")
+            f"Epoch {epoch + 1}/{config['epochs']} | Train Loss: {train_loss:.4f} | Train Metrics: {train_metrics} | "
+            f"Val Loss: {val_loss:.4f} | Val Metrics: {val_metrics}")
 
         wandb.log({
             "epoch": epoch + 1,
             "train_loss": train_loss,
-            "train_acc": train_acc,
+            **{f"train_{k}": v for k, v in train_metrics.items()},
             "val_loss": val_loss,
-            "val_acc": val_acc
+            **{f"val_{k}": v for k, v in val_metrics.items()}
         })
 
         # saves model, optimizer, scheduler along with current values every 5 epochs
@@ -115,24 +127,24 @@ def main():
                         'model_state_dict': model.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict(),
                         'scheduler_state_dict': scheduler.state_dict(),
-                        'val_accuracy': val_acc,
+                        'val_metrics': val_metrics,
                         'val_loss': val_loss,
-                        'train_accuracy': train_acc,
+                        'train_metrics': train_metrics,
                         'train_loss': train_loss},
                        f"checkpoints/checkpoint_{epoch}.pth")
-            print(f'Checkpoint saved with Acc={train_acc*100:.2f}%')
+            print(f'Checkpoint saved with Val Metrics={val_metrics}')
 
         # saves the best model along with current values
-        if val_acc > best_val_accuracy:
-            best_val_accuracy = val_acc
+        if val_metrics["top_1_accuracy"] > best_val_accuracy:
+            best_val_accuracy = val_metrics["top_1_accuracy"]
             torch.save({'epoch': epoch,
                         'model_state_dict': model.state_dict(),
-                        'best_val_accuracy': val_acc,
+                        'best_val_accuracy': val_metrics,
                         'best_val_loss': val_loss,
-                        'best_train_accuracy': train_acc,
+                        'best_train_accuracy': train_metrics,
                         'best_train_loss': train_loss},
                        'best_model.pth')
-            print(f'Best model saved with Acc={best_val_accuracy*100:.2f}%')
+            print(f'Best model saved with Val Top-1 Accuracy={best_val_accuracy:.2f}%')
 
     torch.save(model.state_dict(), f"checkpoints/dino_vit_final.pt")
 
