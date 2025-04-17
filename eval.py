@@ -29,7 +29,7 @@ def test(model, dataloader, criterion, device, verbose=False):
 
     avg_loss = running_loss / total
     accuracy = correct / total
-    print(f"✅ Test Loss: {avg_loss:.4f} | Test Accuracy: {accuracy*100:.2f}%")
+    print(f"Test Loss: {avg_loss:.4f} | Test Accuracy: {accuracy*100:.2f}%")
     return avg_loss, accuracy
 
 
@@ -51,7 +51,7 @@ def main():
     # Load checkpoint
     checkpoint = torch.load("best_model.pth", map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
-    print(f"✅ Loaded model from epoch {checkpoint['epoch']} with val acc: {checkpoint['best_val_accuracy']*100:.2f}%")
+    print(f"Loaded model from epoch {checkpoint['epoch']} with val acc: {checkpoint['best_val_accuracy']*100:.2f}%")
 
     # Loss function
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1).to(device)
