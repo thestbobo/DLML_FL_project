@@ -53,13 +53,14 @@ def get_test_loader():
 
 
 def evaluate(model, dataloader):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
-    model.to(config['DEVICE'])
+    model.to(device)
     correct, total = 0, 0
 
     with torch.no_grad():
         for x, y in dataloader:
-            x, y = x.to(config['DEVICE']), y.to(config['DEVICE'])
+            x, y = x.to(device), y.to(device)
             preds = model(x).argmax(dim=1)
             correct += (preds == y).sum().item()
             total += y.size(0)
@@ -69,6 +70,10 @@ def evaluate(model, dataloader):
 
 
 def train_federated():
+    # cuda status
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("Using device: ", device)
+
     mode = "IID" if config["IID"] else f"Non-IID Nc={config['NC']}"
     print(f"{'=' * 10} Federated Training Start ({mode}) {'=' * 10}")
 
@@ -94,7 +99,7 @@ def train_federated():
             local_model.load_state_dict(global_weights)
 
             client_data = DataLoader(client_datasets[client_id], batch_size=config['BATCH_SIZE'], shuffle=True)
-            updated_weights = local_train(local_model, client_data, config['LOCAL EPOCHS'], config['LR'], config['DEVICE'])
+            updated_weights = local_train(local_model, client_data, config['LOCAL EPOCHS'], config['LR'], device)
             local_weights.append(updated_weights)
             num_samples_list.append(len(client_datasets[client_id]))
 

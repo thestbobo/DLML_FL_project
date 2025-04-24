@@ -19,7 +19,6 @@ LOCAL_EPOCHS: 4
 BATCH_SIZE: 32
 LR: 0.01
 ROUNDS: 100
-DEVICE: "cuda" if torch.cuda.is_available() else "cpu"
 IID: True  # Set to False for non-iid
 NC:   # Number of classes per client in non-iid setting
 SEED: 42
