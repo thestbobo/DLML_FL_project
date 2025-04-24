@@ -1,17 +1,16 @@
 import os
-
 import numpy as np
 import torch
 import yaml
 import wandb
 from torch.utils.data import DataLoader
-
 from models.dino_ViT_b16 import DINO_ViT
 from data.prepare_data_fl import load_cifar100, split_iid, split_noniid
 from fl_core.client import local_train
 from fl_core.server import average_weights_fedavg
 from data.prepare_data import get_test_transforms  # For test set
 from torchvision.datasets import CIFAR100
+from project_utils.metrics import get_metrics
 
 # -------------------- CONFIG --------------------
 
@@ -56,17 +55,21 @@ def evaluate(model, dataloader):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
     model.to(device)
-    correct, total = 0, 0
+    all_outputs, all_labels = [], []
 
     with torch.no_grad():
         for x, y in dataloader:
             x, y = x.to(device), y.to(device)
-            preds = model(x).argmax(dim=1)
-            correct += torch.sum(preds.eq(y)).item()
-            total += y.size(0)
+            outputs = model(x)
+            all_outputs.append(outputs)
+            all_labels.append(y)
 
-    acc = correct / total
-    return acc
+    all_outputs = torch.cat(all_outputs)
+    all_labels = torch.cat(all_labels)
+    metrics = get_metrics(all_outputs, all_labels)  # Calcola le metriche
+
+    return metrics
+
 
 def train_federated():
     # cuda status
@@ -107,12 +110,12 @@ def train_federated():
         global_model.load_state_dict(global_weights)
 
         # Evaluate global model
-        acc = evaluate(global_model, test_loader)
+        metrics = evaluate(global_model, test_loader)
 
         # log round results
         wandb.log({
             "round": round,
-            "global_test_accuracy": acc,
+            **{f"global_test_{k}": v for k, v in metrics.items()},
             "clients_participated": len(selected_clients),
             "samples_used": sum(len(client_datasets[cid]) for cid in selected_clients)
         })
@@ -125,7 +128,7 @@ def train_federated():
             torch.save(global_model.state_dict(), checkpoint_path)
             print(f"Saved checkpoint: {checkpoint_path}")
 
-        print(f"Round {round}: Global Test Accuracy = {acc:.4f}")
+        print(f"Round {round}: Global Test Metrics = {metrics}")
 
     print(f"\n{'=' * 10} Training Completed {'=' * 10}")
     return global_model
