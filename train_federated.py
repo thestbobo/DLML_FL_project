@@ -99,7 +99,7 @@ def train_federated():
             local_model.load_state_dict(global_weights)
 
             client_data = DataLoader(client_datasets[client_id], batch_size=config['BATCH_SIZE'], shuffle=True)
-            updated_weights = local_train(local_model, client_data, config['LOCAL EPOCHS'], config['LR'], device)
+            updated_weights = local_train(local_model, client_data, config['LOCAL_EPOCHS'], config['LR'], device)
             local_weights.append(updated_weights)
             num_samples_list.append(len(client_datasets[client_id]))
 
