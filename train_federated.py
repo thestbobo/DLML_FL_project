@@ -62,12 +62,11 @@ def evaluate(model, dataloader):
         for x, y in dataloader:
             x, y = x.to(device), y.to(device)
             preds = model(x).argmax(dim=1)
-            correct += (preds == y).sum().item()
+            correct += torch.sum(preds.eq(y)).item()
             total += y.size(0)
 
     acc = correct / total
     return acc
-
 
 def train_federated():
     # cuda status
