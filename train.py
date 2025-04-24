@@ -139,7 +139,7 @@ def main():
                         'scheduler_state_dict': scheduler.state_dict(),
                         'val_metrics': val_metrics,
                         'train_metrics': train_metrics},
-                       f"./DLML_FL_project/checkpoints/checkpoint_{epoch}.pth")
+                       f"./checkpoints/checkpoint_{epoch}.pth")
             print(f'Checkpoint saved with Val Metrics={val_metrics}')
 
         if val_metrics["top_1_accuracy"] > best_val_accuracy:

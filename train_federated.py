@@ -119,7 +119,9 @@ def train_federated():
 
         # Save model checkpoint every 10 rounds (or customize)
         if round % 5 == 0 or round == config["ROUNDS"]:
-            checkpoint_path = os.path.join("./DLML_FL_project/checkpoints", f"fl_model_round_{round}.pth")
+            checkpoint_dir = "/content/DLML_FL_project/checkpoints"
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            checkpoint_path = os.path.join(checkpoint_dir, f"fl_model_round_{round}.pth")
             torch.save(global_model.state_dict(), checkpoint_path)
             print(f"Saved checkpoint: {checkpoint_path}")
 
