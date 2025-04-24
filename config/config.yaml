@@ -10,3 +10,16 @@ momentum: 0.9
 t_max: 50
 epochs: 50
 data_dir:
+
+# federated copnfig
+
+NUM_CLIENTS: 100
+CLIENT_FRACTION: 0.1  # 10% of clients selected each round
+LOCAL_EPOCHS: 4
+BATCH_SIZE: 32
+LR: 0.01
+ROUNDS: 100
+DEVICE: "cuda" if torch.cuda.is_available() else "cpu"
+IID: True  # Set to False for non-iid
+NC:   # Number of classes per client in non-iid setting
+SEED: 42
