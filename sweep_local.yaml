@@ -1,4 +1,4 @@
-# sweep_local.yaml
+name: sweep-local
 method: bayes  # 'random' or 'grid' are alternatives
 metric:
   name: top_1_accuracy
@@ -20,7 +20,7 @@ parameters:
   epochs:
     value: 10
   num_workers:
-    value: 4   # Adjust based on your CPU cores
+    value: 4
 
 early_terminate:
   type: hyperband
