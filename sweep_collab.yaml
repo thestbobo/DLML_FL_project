@@ -1,7 +1,7 @@
 name: sweep-collab
 method: bayes  # 'random' or 'grid' are alternatives
 metric:
-  name: top_1_accuracy
+  name: val_top_1_accuracy
   goal: maximize
 
 parameters:
