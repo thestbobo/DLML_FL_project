@@ -148,6 +148,12 @@ def main():
             **{f"val_{k}": v for k, v in val_metrics.items()}
         })
 
+        # Create a unique folder for this run’s checkpoints
+        run_id = wandb.run.id
+        base_ckpt_dir = Path(config.out_checkpoint_dir)
+        run_ckpt_dir = base_ckpt_dir / run_id
+        run_ckpt_dir.mkdir(parents=True, exist_ok=True)
+
         # CHECKPOINTS SAVING (and best model)
         if (epoch + 1) % 5 == 0:
             checkpoint = {'epoch': epoch+1,
@@ -156,8 +162,8 @@ def main():
                           'scheduler_state_dict': scheduler.state_dict(),
                           'val_metrics': val_metrics,
                           'train_metrics': train_metrics}
-            os.makedirs(config['out_checkpoint_dir'], exist_ok=True)
-            torch.save(checkpoint, os.path.join(config['out_checkpoint_dir'], f"centralized_checkpoint_epoch_{epoch + 1}.pth"))
+            path = run_ckpt_dir / f"centralized_checkpoint_epoch_{epoch+1}.pth"
+            torch.save(checkpoint, path)
             print(f'Checkpoint saved at epoch {epoch + 1} with Val Metrics={val_metrics}')
 
         if val_metrics["top_1_accuracy"] > best_val_accuracy:
@@ -166,8 +172,8 @@ def main():
                                'model_state_dict': model.state_dict(),
                                'best_val_metrics': val_metrics,
                                'best_train_metrics': train_metrics}
-            os.makedirs(config['out_checkpoint_dir'], exist_ok=True)
-            torch.save(best_checkpoint, os.path.join(config['out_checkpoint_dir'], f"best_centralized_checkpoint_epoch_{epoch + 1}.pth"))
+            path = run_ckpt_dir / f"best_centralized_checkpoint_epoch_{epoch+1}.pth"
+            torch.save(best_checkpoint, path)
             print(f'Best model saved with Val Top-1 Accuracy={best_val_accuracy*100:.2f}%')
 
     print('----TRAINING COMPLETED----')
