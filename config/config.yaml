@@ -1,6 +1,6 @@
 # JOB CONFIGURATION
 
-# data preparation
+# centralized training config
 batch_size: 256
 val_split: 0.1
 num_workers: 2
@@ -9,10 +9,11 @@ weight_decay: 0.0005
 momentum: 0.9
 t_max: 50
 epochs: 50
-data_dir:
+checkpoint_path: ""           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
+out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
 
-# federated copnfig
 
+# federated training config
 NUM_CLIENTS: 100
 CLIENT_FRACTION: 0.1  # 10% of clients selected each round
 LOCAL_EPOCHS: 4

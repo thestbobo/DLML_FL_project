@@ -1,3 +1,5 @@
+import os
+
 import torch
 import wandb
 import torch.nn as nn
@@ -79,6 +81,7 @@ def validate(model, dataloader, criterion, device, verbose=False):
 
 
 def main():
+
     # cuda status
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device: ", device)
@@ -92,16 +95,13 @@ def main():
     config = wandb.config
 
     # DATA
-    DATA_DIR = Path("./data")
     train_loader, val_loader, test_loader = get_cifar100_loaders(config.val_split, config.batch_size,
                                                                  config.num_workers)
 
     # model definition
     model = DINO_ViT().to(device)
     criterion = nn.CrossEntropyLoss().to(device)
-
     scaler = torch.amp.GradScaler('cuda')
-
     optimizer = torch.optim.SGD(model.classifier.parameters(),
                                 lr=config.learning_rate,
                                 weight_decay=config.weight_decay,
@@ -112,9 +112,25 @@ def main():
 
     scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[5])
 
+    # CHECKPOINT loading:
+    starting_epoch = 0
     best_val_accuracy = 0.0
 
-    for epoch in range(config.epochs):
+    if config.get("checkpoint_path", ""):
+        if os.path.exists(config.checkpoint_path):
+            print(f"Loading checkpoint from {config.checkpoint_path} ...")
+            checkpoint = torch.load(config.checkpoint_path, map_location=device)
+            model.load_state_dict((checkpoint['model_state_dict']))
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+            starting_epoch = checkpoint['epoch']
+            best_val_accuracy = checkpoint.get('val_metrics', {}).get('top1_accuracy', 0.0)
+            print(f"Resumed from epoch {starting_epoch} with best val accuracy: {best_val_accuracy * 100:.2f}%")
+        else:
+            print(f"WARNING: Checkpoint {config.checkpoint_path} not found. Starting from scratch...")
+
+    # TRAINING LOOP
+    for epoch in range(starting_epoch, config.epochs):
         train_loss, train_metrics = train_one_epoch(model, train_loader, optimizer, criterion, scaler, device, epoch + 1,
                                                     verbose=True)
         val_loss, val_metrics = validate(model, val_loader, criterion, device, verbose=True)
@@ -132,28 +148,29 @@ def main():
             **{f"val_{k}": v for k, v in val_metrics.items()}
         })
 
-        # Salvataggio checkpoint e modello migliore
-        if (epoch+1) % 5 == 0:
-            torch.save({'epoch': epoch+1,
-                        'model_state_dict': model.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'scheduler_state_dict': scheduler.state_dict(),
-                        'val_metrics': val_metrics,
-                        'train_metrics': train_metrics},
-                       f"checkpoints/checkpoint_{epoch+1}.pth")
-            print(f'Checkpoint saved with Val Metrics={val_metrics}')
+        # CHECKPOINTS SAVING (and best model)
+        if (epoch + 1) % 5 == 0:
+            checkpoint = {'epoch': epoch+1,
+                          'model_state_dict': model.state_dict(),
+                          'optimizer_state_dict': optimizer.state_dict(),
+                          'scheduler_state_dict': scheduler.state_dict(),
+                          'val_metrics': val_metrics,
+                          'train_metrics': train_metrics}
+            os.makedirs(config['out_checkpoint_dir'], exist_ok=True)
+            torch.save(checkpoint, os.path.join(config['out_checkpoint_dir'], f"centralized_checkpoint_epoch_{epoch + 1}.pth"))
+            print(f'Checkpoint saved at epoch {epoch + 1} with Val Metrics={val_metrics}')
 
         if val_metrics["top_1_accuracy"] > best_val_accuracy:
             best_val_accuracy = val_metrics["top_1_accuracy"]
-            torch.save({'epoch': epoch+1,
-                        'model_state_dict': model.state_dict(),
-                        'best_val_metrics': val_metrics,
-                        'best_train_metrics': train_metrics},
-                       'checkpoints/best_model.pth')
+            best_checkpoint = {'epoch': epoch + 1,
+                               'model_state_dict': model.state_dict(),
+                               'best_val_metrics': val_metrics,
+                               'best_train_metrics': train_metrics}
+            os.makedirs(config['out_checkpoint_dir'], exist_ok=True)
+            torch.save(best_checkpoint, os.path.join(config['out_checkpoint_dir'], f"best_centralized_checkpoint_epoch_{epoch + 1}.pth"))
             print(f'Best model saved with Val Top-1 Accuracy={best_val_accuracy*100:.2f}%')
 
-    torch.save(model.state_dict(), f"checkpoints/dino_vit_final.pt")
-    # saves the best model along with current values
+    print('----TRAINING COMPLETED----')
 
 
 if __name__ == "__main__":
