@@ -99,7 +99,7 @@ def main():
     model = DINO_ViT().to(device)
     criterion = nn.CrossEntropyLoss().to(device)
 
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     optimizer = torch.optim.SGD(model.classifier.parameters(),
                                 lr=config["learning_rate"],
@@ -139,7 +139,7 @@ def main():
                         'scheduler_state_dict': scheduler.state_dict(),
                         'val_metrics': val_metrics,
                         'train_metrics': train_metrics},
-                       f"./checkpoints/checkpoint_{epoch}.pth")
+                       f"checkpoints/checkpoint_{epoch}.pth")
             print(f'Checkpoint saved with Val Metrics={val_metrics}')
 
         if val_metrics["top_1_accuracy"] > best_val_accuracy:
@@ -148,10 +148,10 @@ def main():
                         'model_state_dict': model.state_dict(),
                         'best_val_metrics': val_metrics,
                         'best_train_metrics': train_metrics},
-                       './DLML_FL_project/checkpoints/best_model.pth')
+                       'checkpoints/best_model.pth')
             print(f'Best model saved with Val Top-1 Accuracy={best_val_accuracy:.2f}')
 
-    torch.save(model.state_dict(), f"./DLML_FL_project/checkpoints/dino_vit_final.pt")
+    torch.save(model.state_dict(), f"checkpoints/dino_vit_final.pt")
     # saves the best model along with current values
 
 
