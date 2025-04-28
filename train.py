@@ -133,24 +133,24 @@ def main():
         })
 
         # Salvataggio checkpoint e modello migliore
-        if epoch % 5 == 0:
-            torch.save({'epoch': epoch,
+        if (epoch+1) % 5 == 0:
+            torch.save({'epoch': epoch+1,
                         'model_state_dict': model.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict(),
                         'scheduler_state_dict': scheduler.state_dict(),
                         'val_metrics': val_metrics,
                         'train_metrics': train_metrics},
-                       f"checkpoints/checkpoint_{epoch}.pth")
+                       f"checkpoints/checkpoint_{epoch+1}.pth")
             print(f'Checkpoint saved with Val Metrics={val_metrics}')
 
         if val_metrics["top_1_accuracy"] > best_val_accuracy:
             best_val_accuracy = val_metrics["top_1_accuracy"]
-            torch.save({'epoch': epoch,
+            torch.save({'epoch': epoch+1,
                         'model_state_dict': model.state_dict(),
                         'best_val_metrics': val_metrics,
                         'best_train_metrics': train_metrics},
                        'checkpoints/best_model.pth')
-            print(f'Best model saved with Val Top-1 Accuracy={best_val_accuracy:.2f}')
+            print(f'Best model saved with Val Top-1 Accuracy={best_val_accuracy*100:.2f}%')
 
     torch.save(model.state_dict(), f"checkpoints/dino_vit_final.pt")
     # saves the best model along with current values
