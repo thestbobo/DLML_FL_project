@@ -1,4 +1,4 @@
-# sweep.yaml
+# sweep_local.yaml
 method: bayes  # 'random' or 'grid' are alternatives
 metric:
   name: top_1_accuracy
