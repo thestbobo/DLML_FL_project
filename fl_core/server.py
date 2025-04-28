@@ -1,6 +1,7 @@
 from collections import OrderedDict
 import torch
 
+
 def average_weights_fedavg(weights_list, num_samples_list):
     """
     FedAvg: weighted average of model weights based on number of samples per client.
