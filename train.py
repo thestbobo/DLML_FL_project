@@ -85,15 +85,16 @@ def main():
 
     # load YAML config
     with open("config/config.yaml") as f:
-        config = yaml.safe_load(f)
+        default_config = yaml.safe_load(f)
 
     # WANDB logs setup
-    wandb.init(project="CIFAR-100_centralized", config=config)
+    wandb.init(project="CIFAR-100_centralized", config=default_config)
+    config = wandb.config
 
     # DATA
     DATA_DIR = Path("./data")
-    train_loader, val_loader, test_loader = get_cifar100_loaders(config["val_split"], config["batch_size"],
-                                                                 config["num_workers"])
+    train_loader, val_loader, test_loader = get_cifar100_loaders(config.val_split, config.batch_size,
+                                                                 config.num_workers)
 
     # model definition
     model = DINO_ViT().to(device)
@@ -102,25 +103,25 @@ def main():
     scaler = torch.amp.GradScaler('cuda')
 
     optimizer = torch.optim.SGD(model.classifier.parameters(),
-                                lr=config["learning_rate"],
-                                weight_decay=config["weight_decay"],
-                                momentum=config["momentum"])
+                                lr=config.learning_rate,
+                                weight_decay=config.weight_decay,
+                                momentum=config.momentum)
 
     warmup_scheduler = LinearLR(optimizer, start_factor=0.01, total_iters=5)
-    cosine_scheduler = CosineAnnealingLR(optimizer, T_max=config["epochs"] - 5)
+    cosine_scheduler = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
 
     scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[5])
 
     best_val_accuracy = 0.0
 
-    for epoch in range(config["epochs"]):
+    for epoch in range(config.epochs):
         train_loss, train_metrics = train_one_epoch(model, train_loader, optimizer, criterion, scaler, device, epoch + 1,
                                                     verbose=True)
         val_loss, val_metrics = validate(model, val_loader, criterion, device, verbose=True)
         scheduler.step()
 
         print(
-            f"Epoch {epoch + 1}/{config['epochs']} | Train Loss: {train_loss:.4f} | Train Metrics: {train_metrics} | "
+            f"Epoch {epoch + 1}/{config.epochs} | Train Loss: {train_loss:.4f} | Train Metrics: {train_metrics} | "
             f"Val Loss: {val_loss:.4f} | Val Metrics: {val_metrics}")
 
         wandb.log({
