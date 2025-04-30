@@ -2,10 +2,10 @@
 
 # centralized training config
 batch_size: 256
-val_split: 0.1
-num_workers: 2
-learning_rate: 0.001
-weight_decay: 0.0005
+val_split: 0.2
+num_workers: 4
+learning_rate: 0.008805
+weight_decay: 0.01
 momentum: 0.9
 t_max: 50
 epochs: 50
