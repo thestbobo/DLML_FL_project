@@ -8,6 +8,8 @@ from tqdm import tqdm
 from pathlib import Path
 from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
 
+from model_editing.sparsity import compute_fisher_scores, calibrate_mask
+from model_editing.SparseSGDM import SparseSGDM
 from models.dino_ViT_b16 import DINO_ViT
 from data.prepare_data import get_cifar100_loaders
 from project_utils.metrics import get_metrics
@@ -91,7 +93,7 @@ def main():
         default_config = yaml.safe_load(f)
 
     # WANDB logs setup
-    wandb.init(project="CIFAR-100_centralized", config=default_config)
+    wandb.init(project=default_config.wandb_project_folder, config=default_config)
     config = wandb.config
 
     # DATA
@@ -112,7 +114,16 @@ def main():
 
     scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[5])
 
-    # CHECKPOINT loading:
+    # SPARSE FINE-TUNING (to be enabled in config.yaml):
+    if config.enable_sparse_finetuning:
+        print("Sparse fine-tuning enabled. Computing Fisher scores and calibrating masks...")
+        fisher_scores = compute_fisher_scores(model, train_loader, criterion, device)
+        masks = calibrate_mask(model, fisher_scores, target_sparsity=config.target_sparsity,
+                               rounds=config.sparsity_rounds)
+        optimizer = SparseSGDM(model.parameters(), lr=config.learning_rate, momentum=config.momentum,
+                               weight_decay=config.weight_decay, mask=masks)
+
+    # CHECKPOINT loading (to be enabled in config.yaml):
     starting_epoch = 0
     best_val_accuracy = 0.0
 
