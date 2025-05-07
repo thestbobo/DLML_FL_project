@@ -1,4 +1,5 @@
 # JOB CONFIGURATION
+wandb_project_folder: "CIFAR-100_centralized"         # Name of the project folder in wandb
 
 # centralized training config
 batch_size: 256
@@ -11,6 +12,11 @@ t_max: 50
 epochs: 50
 checkpoint_path: "/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
+
+  # sparse fine-tuning (centralized)
+enable_sparse_finetuning: True          # Enable sparse fine-tuning
+target_sparsity: 0.8                    # Target sparsity level (e.g., 80%)
+sparsity_rounds: 5                      # Number of rounds for mask calibration
 
 
 # federated training config
