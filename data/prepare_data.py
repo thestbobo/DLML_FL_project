@@ -1,5 +1,6 @@
+import torch
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, Subset
 
 
 def get_cifar100_loaders(val_split, batch_size, num_workers):
@@ -43,3 +44,40 @@ def get_test_transforms():
         transforms.ToTensor(),
         transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762))
     ])
+
+
+def get_sparse_loaders(full_train_dataset, calib_frac, batch_size, num_workers, seed=42):
+    """
+    Returns (train_loader, calib_loader) for sparse fine-tuning.
+    """
+    total = len(full_train_dataset)
+    calib_size = int(total * calib_frac)
+    generator = torch.Generator().manual_seed(seed)
+    indices = torch.randperm(total, generator=generator).tolist()
+    calib_idx, train_idx = indices[:calib_size], indices[calib_size:]
+
+    calib_loader = DataLoader(
+        Subset(full_train_dataset, calib_idx),
+        batch_size=batch_size, shuffle=True, num_workers=num_workers
+    )
+    train_loader = DataLoader(
+        Subset(full_train_dataset, train_idx),
+        batch_size=batch_size, shuffle=True, num_workers=num_workers
+    )
+    return train_loader, calib_loader
+
+
+def split_mask_calibration(dataset, calib_frac, seed=42):
+    """
+    Split off a small fraction for mask calibration from a dataset.
+    Returns (calib_subset, main_subset).
+    """
+    total = len(dataset)
+    calib_size = int(total * calib_frac)
+    indices = list(range(total))
+    # reproducible shuffle
+    generator = torch.Generator().manual_seed(seed)
+    indices = torch.randperm(total, generator=generator).tolist()
+    calib_idx = indices[:calib_size]
+    train_idx = indices[calib_size:]
+    return Subset(dataset, calib_idx), Subset(dataset, train_idx)
