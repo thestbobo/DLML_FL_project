@@ -1,4 +1,3 @@
-from torch.optim import SGD
 import torch
 
 
