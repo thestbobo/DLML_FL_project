@@ -17,7 +17,7 @@ out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
 enable_sparse_finetuning: True          # Enable sparse fine-tuning
 target_sparsity: 0.8                    # Target sparsity level (e.g., 80%)
 sparsity_rounds: 5                      # Number of rounds for mask calibration
-
+calib_split: 0.05                       # split of the training data dedicated to mask calibration
 
 # federated training config
 NUM_CLIENTS: 100
