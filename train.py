@@ -105,7 +105,7 @@ def main():
     if config.enable_sparse_finetuning:
         # splits train loader to get a fraction of the data for mask calibration
         sparse_train_loader, calib_loader = get_sparse_loaders(
-            train_loader,
+            train_loader.dataset,
             calib_frac=config.calib_split,
             batch_size=config.batch_size,
             num_workers=config.num_workers,
