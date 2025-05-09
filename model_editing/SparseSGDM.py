@@ -17,7 +17,7 @@ class SparseSGDM(SGD):
                 if p.grad is None:
                     continue
                 d_p = p.grad
-                if self.mask is not None and p in self.mask:
+                if self.mask is not None and p in self.mask:            # only update masked parameters
                     d_p = d_p * self.mask[p]
                 if group['weight_decay'] != 0:
                     d_p = d_p.add(p, alpha=group['weight_decay'])

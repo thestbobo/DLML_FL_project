@@ -33,7 +33,7 @@ def calibrate_mask(model, fisher_scores, target_sparsity, rounds):
     """
     masks = {name: torch.ones_like(param) for name, param in model.named_parameters() if param.requires_grad}
     total_params = sum(param.numel() for param in model.parameters() if param.requires_grad)
-    target_params = int(total_params * (1 - target_sparsity))
+    target_params = int(total_params * (1 - target_sparsity))       # params to be kept
 
     for _ in range(rounds):
         # Flatten scores and masks
@@ -42,7 +42,7 @@ def calibrate_mask(model, fisher_scores, target_sparsity, rounds):
 
         # Update masks
         for name in masks:
-            masks[name] = (fisher_scores[name] > threshold).float()
+            masks[name] = (fisher_scores[name] <= threshold).float()
 
         # Update target params for next round
         target_params = int(target_params * (1 - target_sparsity / rounds))
