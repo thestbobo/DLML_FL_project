@@ -29,6 +29,7 @@ class SparseSGDM(SGD):
                         buf = param_state['momentum_buffer']
                         buf.mul_(group['momentum']).add_(d_p, alpha=1 - group['dampening'])
                     d_p = buf
-                p.add_(d_p, alpha=-group['lr'])
+                with torch.no_grad():
+                    p.add_(d_p, alpha=-group['lr'])
 
         return loss
