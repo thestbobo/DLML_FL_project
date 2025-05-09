@@ -1,5 +1,6 @@
 # JOB CONFIGURATION
 wandb_project_folder: "CIFAR-100_centralized"         # Name of the project folder in wandb
+seed: 42                                              # Random seed for reproducibility
 
 # centralized training config
 batch_size: 256
