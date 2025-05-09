@@ -19,6 +19,8 @@ enable_sparse_finetuning: True          # Enable sparse fine-tuning
 target_sparsity: 0.8                    # Target sparsity level (e.g., 80%)
 sparsity_rounds: 5                      # Number of rounds for mask calibration
 calib_split: 0.05                       # split of the training data dedicated to mask calibration
+calib_batch_size:    16     # for Fisher calibration
+calib_rounds: 5
 
 # federated training config
 NUM_CLIENTS: 100

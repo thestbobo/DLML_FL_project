@@ -46,7 +46,7 @@ def get_test_transforms():
     ])
 
 
-def get_sparse_loaders(full_train_dataset, calib_frac, batch_size, num_workers, seed=42):
+def get_sparse_loaders(full_train_dataset, calib_frac, calib_batch_size, batch_size, num_workers, seed=42):
     """
     Returns (train_loader, calib_loader) for sparse fine-tuning.
     """
@@ -58,7 +58,7 @@ def get_sparse_loaders(full_train_dataset, calib_frac, batch_size, num_workers, 
 
     calib_loader = DataLoader(
         Subset(full_train_dataset, calib_idx),
-        batch_size=batch_size, shuffle=True, num_workers=num_workers
+        batch_size=calib_batch_size, shuffle=True, num_workers=num_workers
     )
     train_loader = DataLoader(
         Subset(full_train_dataset, train_idx),

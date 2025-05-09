@@ -108,6 +108,7 @@ def main():
             train_loader.dataset,
             calib_frac=config.calib_split,
             batch_size=config.batch_size,
+            calib_batch_size=config.calib_batch_size,
             num_workers=config.num_workers,
             seed=config.seed
         )
@@ -135,7 +136,8 @@ def main():
         print("[TaLoS] Computing Fisher scores on calibration set...")
         fisher_scores = compute_fisher_scores(model, calib_loader, criterion, device)
         print(f"[TaLoS] Calibrating mask (sparsity={config.target_sparsity})...")
-        name_mask = calibrate_mask(fisher_scores, config.target_sparsity, rounds=1)
+        name_mask = calibrate_mask(model, fisher_scores, config.target_sparsity, rounds=config.calib_rounds)
+        torch.cuda.empty_cache()
         # Map parameter objects to mask tensors
         param_mask = {
             param: name_mask[name]
