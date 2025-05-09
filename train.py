@@ -227,6 +227,7 @@ def main():
         tau = {}
         for name, param in model.named_parameters():
             if name in name_mask:
+                mask_cpu = name_mask[name].cpu()
                 diff = (param.cpu() - base_state[name])
                 tau[name] = diff.mul(name_mask[name])
         torch.save(tau, Path(config.out_checkpoint_dir) / "sparse_task_vector.pt")
