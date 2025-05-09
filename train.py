@@ -138,6 +138,7 @@ def main():
         print(f"[TaLoS] Calibrating mask (sparsity={config.target_sparsity})...")
         name_mask = calibrate_mask(model, fisher_scores, config.target_sparsity, rounds=config.calib_rounds)
         torch.cuda.empty_cache()
+
         # Map parameter objects to mask tensors
         param_mask = {
             param: name_mask[name]
@@ -165,8 +166,10 @@ def main():
             print(f"Loading checkpoint from {config.checkpoint_path} ...")
             checkpoint = torch.load(config.checkpoint_path, map_location=device)
             model.load_state_dict((checkpoint['model_state_dict']))
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+            # drop the dense training optimizer from the checkpoint if sparse fine-tuning is enabled
+            if not config.enable_sparse_finetuning:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
             starting_epoch = checkpoint['epoch']
             best_val_accuracy = checkpoint.get('val_metrics', {}).get('top1_accuracy', 0.0)
             print(f"Resumed from epoch {starting_epoch} with best val accuracy: {best_val_accuracy * 100:.2f}%")
