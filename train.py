@@ -152,9 +152,9 @@ def main():
             mask=param_mask
         )
         # Rebuild scheduler on new optimizer
-        warmup = LinearLR(optimizer, start_factor=0.01, total_iters=config.warmup_iters)
-        cosine = CosineAnnealingLR(optimizer, T_max=config.epochs - config.warmup_iters)
-        scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[config.warmup_iters])
+        warmup = LinearLR(optimizer, start_factor=0.01, total_iters=5)
+        cosine = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
+        scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 
     # CHECKPOINT loading (optional: must be enabled in config.yaml):
     starting_epoch = 0
