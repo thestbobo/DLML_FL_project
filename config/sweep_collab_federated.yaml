@@ -1,0 +1,29 @@
+name: sweep-collab-federated
+method: bayes  # 'random' or 'grid' are alternatives
+metric:
+  name: global_test_top_1_accuracy
+  goal: maximize
+
+parameters:
+  LR:
+    distribution: log_uniform_values
+    min: 0.001
+    max: 0.01
+  BATCH_SIZE: [32, 64, 128, 256]
+  model: "DINO ViT-S/16"
+  dataset: "CIFAR-100"
+  NUM_CLIENTS: 100
+  CLIENT_FRACTION: 0.1  # 10% of clients selected each round
+  LOCAL_EPOCHS: 4
+  ROUNDS: 100
+  IID: True  # Set to False for non-iid
+  NC:   # Number of classes per client in non-iid setting
+  SEED: 42
+
+early_terminate:
+  type: hyperband
+  min_iter: 10
+
+command:
+  - python
+  - train_federated.py
