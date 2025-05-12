@@ -15,40 +15,34 @@ from project_utils.metrics import get_metrics
 # -------------------- CONFIG --------------------
 
 with open("config/config.yaml") as f:
-    config = yaml.safe_load(f)
+    default_config = yaml.safe_load(f)
 # ------------------------------------------------
-
 
 wandb.init(
     project="Federated-DINO-ViT",
-    config={
-        "model": "DINO ViT-S/16",
-        "dataset": "CIFAR-100",
-        "num_clients": config['NUM_CLIENTS'],
-        "client_fraction": config["CLIENT_FRACTION"],
-        "local_epochs": config["LOCAL_EPOCHS"],
-        "batch_size": config["BATCH_SIZE"],
-        "lr": config["LR"],
-        "rounds": config["ROUNDS"],
-        "iid": config["IID"],
-        "nc": config["NC"] if not config["IID"] else None
-    }
+    config=default_config
 )
 
+config = wandb.config
+config.NC = config.NC if not config.IID else None
+config.model = "DINO ViT-S/16"
+config.dataset = "CIFAR-100"
+np.random.seed(config.SEED)
+torch.manual_seed(config.SEED)
 
 def get_client_datasets():
     full_dataset = load_cifar100()
 
-    if config['IID']:
-        return split_iid(full_dataset, config["NUM_CLIENTS"])
+    if config.IID:
+        return split_iid(full_dataset, config.NUM_CLIENTS)
     else:
-        return split_noniid(full_dataset, config["NUM_CLIENTS"], nc=config['NC'], seed=config['SEED'])
+        return split_noniid(full_dataset, config.NUM_CLIENTS, nc=config.NC, seed=config.SEED)
 
 
 def get_test_loader():
     test_transform = get_test_transforms()
     test_data = CIFAR100(root="./data", train=False, download=True, transform=test_transform)
-    return DataLoader(test_data, batch_size=config['BATCH_SIZE'], shuffle=False)
+    return DataLoader(test_data, batch_size=config.BATCH_SIZE, shuffle=False)
 
 
 def evaluate(model, dataloader):
@@ -76,7 +70,7 @@ def train_federated():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device: ", device)
 
-    mode = "IID" if config["IID"] else f"Non-IID Nc={config['NC']}"
+    mode = "IID" if config.IID else f"Non-IID Nc={config.NC}"
     print(f"{'=' * 10} Federated Training Start ({mode}) {'=' * 10}")
 
     # Load data
@@ -87,12 +81,12 @@ def train_federated():
     global_model = DINO_ViT(num_classes=100, pretrained=True)
     global_weights = global_model.state_dict()
 
-    for round in range(1, config['ROUNDS'] + 1):
+    for round in range(1, config.ROUNDS + 1):
         print(f"\n--- Round {round} ---")
 
         # Sample clients
-        m = max(int(config['CLIENT_FRACTION'] * config["NUM_CLIENTS"]), 1)
-        selected_clients = np.random.choice(config["NUM_CLIENTS"], m, replace=False)
+        m = max(int(config.CLIENT_FRACTION * config.NUM_CLIENTS), 1)
+        selected_clients = np.random.choice(config.NUM_CLIENTS, m, replace=False)
 
         local_weights = []
         num_samples_list = []
@@ -100,8 +94,8 @@ def train_federated():
             local_model = DINO_ViT(num_classes=100, pretrained=False)
             local_model.load_state_dict(global_weights)
 
-            client_data = DataLoader(client_datasets[client_id], batch_size=config['BATCH_SIZE'], shuffle=True)
-            updated_weights = local_train(local_model, client_data, config['LOCAL_EPOCHS'], config['LR'], device)
+            client_data = DataLoader(client_datasets[client_id], batch_size=config.BATCH_SIZE, shuffle=True)
+            updated_weights = local_train(local_model, client_data, config.LOCAL_EPOCHS, config.LR, device)
             local_weights.append(updated_weights)
             num_samples_list.append(len(client_datasets[client_id]))
 
@@ -121,7 +115,7 @@ def train_federated():
         })
 
         # Save model checkpoint every 10 rounds (or customize)
-        if round % 5 == 0 or round == config["ROUNDS"]:
+        if round % 5 == 0 or round == config.ROUNDS:
             checkpoint_dir = "/content/DLML_FL_project/checkpoints"
             os.makedirs(checkpoint_dir, exist_ok=True)
             checkpoint_path = os.path.join(checkpoint_dir, f"fl_model_round_{round}.pth")
