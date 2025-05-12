@@ -3,9 +3,20 @@ from torch.optim import SGD
 
 
 class SparseSGDM(SGD):
-    def __init__(self, params, lr, momentum=0, weight_decay=0, mask=None):
-        super(SparseSGDM, self).__init__(params, lr, momentum=momentum, weight_decay=weight_decay)
+    def __init__(self, params, lr, momentum=0, dampening=0, weight_decay=0,
+                 nesterov=False, mask=None, model=None):
+        super(SparseSGDM, self).__init__(params, lr=lr, momentum=momentum,
+                                         dampening=dampening, weight_decay=weight_decay,
+                                         nesterov=nesterov)
         self.mask = mask
+        if mask is not None and model is not None:
+            param_to_mask = {}
+            for name, param in model.named_parameters():
+                if name in mask:
+                    param_to_mask[param] = mask[name]
+            self.mask = param_to_mask
+        else:
+            self.mask = None
 
     def step(self, closure=None):
         loss = None
