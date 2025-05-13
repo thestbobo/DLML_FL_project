@@ -14,13 +14,26 @@ epochs: 50
 checkpoint_path: "/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
 
-  # sparse fine-tuning (centralized)
-enable_sparse_finetuning: False          # Enable sparse fine-tuning
+# fine-tuning method switch
+finetuning_method: "lora"   # or "sparse" or "lora"
+
+# sparse fine-tuning (centralized)
+nesterov: False                         # enable nesterov acceleration
+dampening: 0                            # fraction of grad to drop from momentum buffer
 target_sparsity: 0.8                    # Target sparsity level (e.g., 80%)
 sparsity_rounds: 5                      # Number of rounds for mask calibration
 calib_split: 0.05                       # split of the training data dedicated to mask calibration
-calib_batch_size:    16     # for Fisher calibration
+calib_batch_size: 16                    # for Fisher calibration
 calib_rounds: 5
+
+# LoRA fine-tuning (centralized)
+lora_r: 4
+lora_alpha: 16
+lora_dropout: 0.1
+lora_target_modules:
+  - "q"
+  - "v"
+
 
 # federated training config
 NUM_CLIENTS: 100
