@@ -215,6 +215,8 @@ def main():
             best_val_accuracy = val_metrics["top_1_accuracy"]
             best_checkpoint = {'epoch': epoch + 1,
                                'model_state_dict': model.state_dict(),
+                               'optimizer_state_dict': optimizer.state_dict(),
+                               'scheduler_state_dict': scheduler.state_dict(),
                                'best_val_metrics': val_metrics,
                                'best_train_metrics': train_metrics}
             os.makedirs(config['out_checkpoint_dir'], exist_ok=True)
