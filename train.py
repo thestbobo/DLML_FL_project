@@ -1,20 +1,22 @@
 import os
-
-import torch
 import wandb
-import torch.nn as nn
 import yaml
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 from pathlib import Path
+
+import torch
+import torch.nn as nn
 from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
-from torch.cuda.amp import GradScaler
 
 from model_editing.TaLoS import compute_fisher_scores, calibrate_mask
 from model_editing.SparseSGDM import SparseSGDM
+from model_editing.LoRA import replace_linear_with_lora, mark_only_lora_as_trainable
+
 from models.dino_ViT_b16 import DINO_ViT
 from data.prepare_data import get_cifar100_loaders, split_mask_calibration, get_sparse_loaders
 from project_utils.metrics import get_metrics
+
+
 
 
 def train_one_epoch(model, dataloader, optimizer, criterion, scaler, device, curr_epoch, verbose=False):
@@ -102,22 +104,12 @@ def main():
     train_loader, val_loader, test_loader = get_cifar100_loaders(config.val_split, config.batch_size,
                                                                  config.num_workers)
 
-    if config.enable_sparse_finetuning:
-        # splits train loader to get a fraction of the data for mask calibration
-        sparse_train_loader, calib_loader = get_sparse_loaders(
-            train_loader.dataset,
-            calib_frac=config.calib_split,
-            batch_size=config.batch_size,
-            calib_batch_size=config.calib_batch_size,
-            num_workers=config.num_workers,
-            seed=config.seed
-        )
-        train_loader = sparse_train_loader
-    else:
-        calib_loader = None
+
 
     # MODEL DEFINITION
     model = DINO_ViT().to(device)
+
+    # CRITERION, OPTIMIZER, SCHEDULER DEFINITION
     criterion = nn.CrossEntropyLoss().to(device)
     scaler = torch.cuda.amp.GradScaler()
 
@@ -131,8 +123,43 @@ def main():
     cosine_scheduler = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
     scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[5])
 
+
+    if config.finetuning_method.lower() == "lora":
+        replace_linear_with_lora(
+            model,
+            r=config.lora_r,
+            alpha=config.lora_alpha,
+            dropout=config.lora_dropout,
+            target_module_substrings=config.lora_target_modules
+        )
+        mark_only_lora_as_trainable(model)
+        optimizer = torch.optim.SGD(
+            filter(lambda p: p.requires_grad, model.parameters()),
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay,
+            momentum=config.momentum
+        )
+        warmup_scheduler = LinearLR(optimizer, start_factor=0.01, total_iters=5)
+        cosine_scheduler = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
+        scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[5])
+
+    if config.finetuning_method.lower() == "sparse":
+        # splits train loader to get a fraction of the data for mask calibration
+        sparse_train_loader, calib_loader = get_sparse_loaders(
+            train_loader.dataset,
+            calib_frac=config.calib_split,
+            batch_size=config.batch_size,
+            calib_batch_size=config.calib_batch_size,
+            num_workers=config.num_workers,
+            seed=config.seed
+        )
+        train_loader = sparse_train_loader
+    else:
+        calib_loader = None
+
+
     # SPARSE FINE-TUNING SETUP (optional: must be enabled in config.yaml)
-    if config.enable_sparse_finetuning:
+    if config.finetuning_method.lower() == "sparse":
         print("[TaLoS] Computing Fisher scores on calibration set...")
         fisher_scores = compute_fisher_scores(model, calib_loader, criterion, device)
         print(f"[TaLoS] Calibrating mask (sparsity={config.target_sparsity})...")
@@ -146,9 +173,11 @@ def main():
             if name in name_mask
         }
         optimizer = SparseSGDM(
-            model.parameters(),
+            params=model.parameters(),
             lr=config.learning_rate,
             momentum=config.momentum,
+            dampening=config.dampening,
+            nesterov=config.nesterov,
             weight_decay=config.weight_decay,
             mask=param_mask
         )
@@ -156,6 +185,7 @@ def main():
         warmup = LinearLR(optimizer, start_factor=0.01, total_iters=5)
         cosine = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
         scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
+
 
     # CHECKPOINT loading (optional: must be enabled in config.yaml):
     starting_epoch = 0
@@ -165,16 +195,17 @@ def main():
         if os.path.exists(config.checkpoint_path):
             print(f"Loading checkpoint from {config.checkpoint_path} ...")
             checkpoint = torch.load(config.checkpoint_path, map_location=device)
-            model.load_state_dict((checkpoint['model_state_dict']))
+            model.load_state_dict(checkpoint['model_state_dict'], strict=False)
             # drop the dense training optimizer from the checkpoint if sparse fine-tuning is enabled
-            if not config.enable_sparse_finetuning:
+            if not config.finetuning_method.lower() == "sparse":
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                 scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
             starting_epoch = checkpoint['epoch']
-            best_val_accuracy = checkpoint.get('val_metrics', {}).get('top1_accuracy', 0.0)
+            best_val_accuracy = checkpoint.get('val_metrics', {}).get('top_1_accuracy', 0.0)
             print(f"Resumed from epoch {starting_epoch} with best val accuracy: {best_val_accuracy * 100:.2f}%")
         else:
             print(f"WARNING: Checkpoint {config.checkpoint_path} not found. Starting from scratch...")
+
 
     # Save base state for tau (task vector) extraction
     base_state = {n: p.clone().cpu() for n, p in model.named_parameters()}
@@ -224,7 +255,7 @@ def main():
             print(f'Best model saved with Val Top-1 Accuracy={best_val_accuracy*100:.2f}%')
 
     # EXTRACT SPARSE TASK VECTOR (TAU)
-    if config.enable_sparse_finetuning:
+    if config.finetuning_method.lower() == "sparse":
         print("[TaLoS] Extracting task vector (tau)...")
         tau = {}
         for name, param in model.named_parameters():
