@@ -6,7 +6,7 @@ seed: 42                                              # Random seed for reproduc
 batch_size: 256
 val_split: 0.1
 num_workers: 4
-learning_rate: 0.0032
+learning_rate: 0.008805
 weight_decay: 0.0001
 momentum: 0.96
 t_max: 50
