@@ -6,8 +6,8 @@ seed: 42                                              # Random seed for reproduc
 batch_size: 256
 val_split: 0.1
 num_workers: 4
-learning_rate: 0.008805
-weight_decay: 0.0001
+learning_rate: 0.003214
+weight_decay: 0.00005743
 momentum: 0.96
 t_max: 50
 epochs: 50
@@ -15,7 +15,7 @@ checkpoint_path: "/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pt
 out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
 
   # sparse fine-tuning (centralized)
-enable_sparse_finetuning: True          # Enable sparse fine-tuning
+enable_sparse_finetuning: False          # Enable sparse fine-tuning
 target_sparsity: 0.8                    # Target sparsity level (e.g., 80%)
 sparsity_rounds: 5                      # Number of rounds for mask calibration
 calib_split: 0.05                       # split of the training data dedicated to mask calibration
