@@ -49,26 +49,33 @@ def main():
     model = DINO_ViT().to(device)
 
     # Load checkpoint
-    checkpoint = torch.load("best_model.pth", map_location=device)
+    checkpoint_name = "centralized_checkpoint_epoch_50.pth"
+    checkpoint_path = "checkpoints\\sparse\\" + checkpoint_name   # two separate folders for sparse and no_sparse
+    checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
-    print(f"Loaded model from epoch {checkpoint['epoch']} with val acc: {checkpoint['best_val_accuracy']*100:.2f}%")
+
+    if checkpoint_name[0:4] == "best":
+        val_acc = checkpoint.get('best_val_metrics', {}).get('top_1_accuracy', 0.0)
+    else:
+        val_acc = checkpoint.get('val_metrics', {}).get('top_1_accuracy', 0.0)
+    print(f"Loaded model from epoch {checkpoint['epoch']} with val acc: {val_acc*100:.2f}%")
 
     # Loss function
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1).to(device)
 
-    # Optional: initialize WandB run for test logging
-    wandb.init(project="CIFAR-100_centralized", name="final_test", config=config)
+    # # Optional: initialize WandB run for test logging
+    # wandb.init(project="CIFAR-100_centralized", name="final_test", config=config)
 
     # Run test
     test_loss, test_acc = test(model, test_loader, criterion, device, verbose=True)
 
-    # Log to WandB
-    wandb.log({
-        "test_loss": test_loss,
-        "test_accuracy": test_acc
-    })
-
-    wandb.finish()
+    # # Log to WandB
+    # wandb.log({
+    #     "test_loss": test_loss,
+    #     "test_accuracy": test_acc
+    # })
+    #
+    # wandb.finish()
 
 
 if __name__ == "__main__":
