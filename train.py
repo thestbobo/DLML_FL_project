@@ -109,6 +109,34 @@ def main():
     # MODEL DEFINITION
     model = DINO_ViT().to(device)
 
+    if config.finetuning_method.lower() == "lora":
+        replace_linear_with_lora(
+            model,
+            r=config.lora_r,
+            alpha=config.lora_alpha,
+            dropout=config.lora_dropout,
+            target_module_substrings=config.lora_target_modules
+        )
+
+    # CHECKPOINT LOADING FOR MODEL WEIGHTS (optional: must be enabled in config.yaml):
+    starting_epoch = 0
+    best_val_accuracy = 0.0
+
+    if config.get("checkpoint_path", "") and os.path.exists(config.checkpoint_path):
+        print(f"Loading checkpoint from {config.checkpoint_path} ...")
+        checkpoint = torch.load(config.checkpoint_path, map_location=device)
+        if config.finetuning_method.lower() == "lora":
+            # adapters have been injected → skip missing adapter keys
+            model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        else:
+            # pure ViT → catch any real backbone mismatches
+            model.load_state_dict(checkpoint['model_state_dict'], strict=True)
+        starting_epoch = checkpoint['epoch']
+        best_val_accuracy = checkpoint.get('val_metrics', {}).get('top_1_accuracy', 0.0)
+        print(f"Resumed from epoch {starting_epoch} with best val accuracy: {best_val_accuracy * 100:.2f}%")
+    else:
+        print(f"WARNING: Checkpoint {config.checkpoint_path} not found. Starting from scratch...")
+
     # CRITERION, OPTIMIZER, SCHEDULER DEFINITION
     criterion = nn.CrossEntropyLoss().to(device)
     scaler = torch.cuda.amp.GradScaler()
@@ -125,13 +153,6 @@ def main():
 
 
     if config.finetuning_method.lower() == "lora":
-        replace_linear_with_lora(
-            model,
-            r=config.lora_r,
-            alpha=config.lora_alpha,
-            dropout=config.lora_dropout,
-            target_module_substrings=config.lora_target_modules
-        )
         mark_only_lora_as_trainable(model)
         optimizer = torch.optim.SGD(
             filter(lambda p: p.requires_grad, model.parameters()),
@@ -187,24 +208,12 @@ def main():
         scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 
 
-    # CHECKPOINT loading (optional: must be enabled in config.yaml):
-    starting_epoch = 0
-    best_val_accuracy = 0.0
-
-    if config.get("checkpoint_path", ""):
-        if os.path.exists(config.checkpoint_path):
-            print(f"Loading checkpoint from {config.checkpoint_path} ...")
-            checkpoint = torch.load(config.checkpoint_path, map_location=device)
-            model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-            # drop the dense training optimizer from the checkpoint if sparse fine-tuning is enabled
-            if not config.finetuning_method.lower() == "sparse":
-                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-            starting_epoch = checkpoint['epoch']
-            best_val_accuracy = checkpoint.get('val_metrics', {}).get('top_1_accuracy', 0.0)
-            print(f"Resumed from epoch {starting_epoch} with best val accuracy: {best_val_accuracy * 100:.2f}%")
-        else:
-            print(f"WARNING: Checkpoint {config.checkpoint_path} not found. Starting from scratch...")
+    # CHECKPOINT LOADING FOR OPTIMIZER AND SCHEDULER STATES (optional: must be enabled in config.yaml):
+    if config.get("checkpoint_path", "") and os.path.exists(config.checkpoint_path):
+        checkpoint = torch.load(config.checkpoint_path, map_location=device)
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        print("Optimizer & scheduler state restored")
 
 
     # Save base state for tau (task vector) extraction
