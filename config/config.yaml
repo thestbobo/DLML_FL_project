@@ -38,8 +38,8 @@ lora_target_modules:
   - "qkv"
   - "proj"
   # optionally, for adapters in the MLP:
-  - "mlp.fc1"
-  - "mlp.fc2"
+  # - "mlp.fc1"
+  # - "mlp.fc2"
 # --------------------------
 # FEDERATED TRAINING CONFIG
 # --------------------------
