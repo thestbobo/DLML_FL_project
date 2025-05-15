@@ -125,7 +125,7 @@ def main():
     if config.get("checkpoint_path", "") and os.path.exists(config.checkpoint_path):
         print(f"Loading checkpoint from {config.checkpoint_path} ...")
         checkpoint = torch.load(config.checkpoint_path, map_location=device)
-        if config.finetuning_method.lower() == "lora":
+        if checkpoint['finetuning_method'].lower() == "lora":
             # adapters have been injected → skip missing adapter keys
             model.load_state_dict(checkpoint['model_state_dict'], strict=False)
         else:
