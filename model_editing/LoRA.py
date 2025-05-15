@@ -33,8 +33,9 @@ class LoRALayer(nn.Module):
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
         # LoRA parameters
-        self.A = nn.Parameter(torch.zeros(orig_linear.in_features, r))
-        self.B = nn.Parameter(torch.zeros(r, orig_linear.out_features))
+        dev = orig_linear.weight.device
+        self.A = nn.Parameter(torch.zeros(orig_linear.in_features, r, device=dev))
+        self.B = nn.Parameter(torch.zeros(r, orig_linear.out_features, device=dev))
         # init
         nn.init.kaiming_uniform_(self.A, a=math.sqrt(5))
         nn.init.zeros_(self.B)
