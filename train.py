@@ -104,29 +104,8 @@ def main():
     train_loader, val_loader, test_loader = get_cifar100_loaders(config.val_split, config.batch_size,
                                                                  config.num_workers)
 
-
-
     # MODEL DEFINITION
     model = DINO_ViT().to(device)
-
-    # CHECKPOINT LOADING FOR MODEL WEIGHTS (optional: must be enabled in config.yaml):
-    starting_epoch = 0
-    best_val_accuracy = 0.0
-
-    if config.get("checkpoint_path", "") and os.path.exists(config.checkpoint_path):
-        print(f"Loading checkpoint from {config.checkpoint_path} ...")
-        checkpoint = torch.load(config.checkpoint_path, map_location=device)
-        if checkpoint['finetuning_method'].lower() == "lora":
-            # adapters have been injected → skip missing adapter keys
-            model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-        else:
-            # pure ViT → catch any real backbone mismatches
-            model.load_state_dict(checkpoint['model_state_dict'], strict=True)
-        starting_epoch = checkpoint['epoch']
-        best_val_accuracy = checkpoint.get('val_metrics', {}).get('top_1_accuracy', 0.0)
-        print(f"Resumed from epoch {starting_epoch} with best val accuracy: {best_val_accuracy * 100:.2f}%")
-    else:
-        print(f"WARNING: Checkpoint {config.checkpoint_path} not found. Starting from scratch...")
 
     # CRITERION, OPTIMIZER, SCHEDULER DEFINITION
     criterion = nn.CrossEntropyLoss().to(device)
@@ -144,22 +123,22 @@ def main():
 
     # FINE-TUNING SETUP
     if config.finetuning_method == "lora":
-        # 1) Configure LoRA
+        # Configure LoRA
         lora_cfg = LoraConfig(
             r=config.lora_rank,
             alpha=config.lora_alpha,
             target_modules=config.lora_target_modules,  # e.g. ["q_proj","k_proj","v_proj","out_proj"]
             dropout=config.lora_dropout,
         )
-        # 2) Wrap the model
+        # Wrap the model
         model = apply_lora(model, lora_cfg)
-        # 3) Freeze backbone, leave only LoRA A/B trainable
+        # Freeze backbone, leave only LoRA A/B trainable
         for name, p in model.named_parameters():
             p.requires_grad = False
         for p in get_lora_params(model):
             p.requires_grad = True
 
-        # 4) Build optimizer over just LoRA params
+        # Build optimizer over just LoRA params
         optimizer = SparseSGDM(
             get_lora_params(model),
             lr=config.learning_rate,
@@ -218,12 +197,27 @@ def main():
     else:
         raise ValueError(f"Unknown finetuning_method: {config.finetuning_method}")
 
-    # CHECKPOINT LOADING FOR OPTIMIZER AND SCHEDULER STATES (optional: must be enabled in config.yaml):
-    if config.get("checkpoint_path", "") and os.path.exists(config.checkpoint_path):
-        checkpoint = torch.load(config.checkpoint_path, map_location=device)
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        print("Optimizer & scheduler state restored")
+    # CHECKPOINT LOADING FOR MODEL WEIGHTS (optional: must be enabled in config.yaml):
+    starting_epoch = 0
+    best_val_accuracy = 0.0
+
+    ckpt_path = config.get("checkpoint_path", "")
+    if ckpt_path and os.path.exists(ckpt_path):
+        print(f"Loading checkpoint from {ckpt_path} …")
+        ckpt = torch.load(ckpt_path, map_location=device)
+
+        method = ckpt.get("finetuning_method", "").lower()
+        strict = (method != "lora")
+        model.load_state_dict(ckpt["model_state_dict"], strict=strict)
+
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+
+        starting_epoch = ckpt.get("epoch", 0)
+        best_val_accuracy = ckpt.get("val_metrics", {}).get("top_1_accuracy", 0.0)
+        print(f"Resumed from epoch {starting_epoch} with best val@1 = {best_val_accuracy * 100:.2f}%")
+    else:
+        print("No valid checkpoint found; starting from scratch.")
 
     # Save base state for tau (task vector) extraction
     base_state = {n: p.clone().cpu() for n, p in model.named_parameters()}
@@ -275,7 +269,7 @@ def main():
             print(f'Best model saved with Val Top-1 Accuracy={best_val_accuracy*100:.2f}%')
 
     # EXTRACT SPARSE TASK VECTOR (TAU)
-    if config.finetuning_method.lower() == "sparse":
+    if config.finetuning_method.lower() == "talos":
         print("[TaLoS] Extracting task vector (tau)...")
         tau = {}
         for name, param in model.named_parameters():
