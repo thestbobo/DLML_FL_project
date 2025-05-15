@@ -111,15 +111,15 @@ def main():
     criterion = nn.CrossEntropyLoss().to(device)
     scaler = torch.cuda.amp.GradScaler()
 
-    optimizer = torch.optim.SGD(model.classifier.parameters(),
-                                lr=config.learning_rate,
-                                weight_decay=config.weight_decay,
-                                momentum=config.momentum)
+    # optimizer = torch.optim.SGD(model.classifier.parameters(),
+    #                             lr=config.learning_rate,
+    #                             weight_decay=config.weight_decay,
+    #                             momentum=config.momentum)
 
     # LR SCHEDULER
-    warmup_scheduler = LinearLR(optimizer, start_factor=0.01, total_iters=5)
-    cosine_scheduler = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
-    scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[5])
+    # warmup_scheduler = LinearLR(optimizer, start_factor=0.01, total_iters=5)
+    # cosine_scheduler = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
+    # scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[5])
 
     # FINE-TUNING SETUP
     if config.finetuning_method == "lora":
@@ -132,11 +132,14 @@ def main():
         )
         # Wrap the model
         model = apply_lora(model, lora_cfg)
+        model = model.to(device)
         # Freeze backbone, leave only LoRA A/B trainable
         for name, p in model.named_parameters():
             p.requires_grad = False
         for p in get_lora_params(model):
             p.requires_grad = True
+
+        torch.cuda.empty_cache()
 
         # Build optimizer over just LoRA params
         optimizer = SparseSGDM(
@@ -149,6 +152,7 @@ def main():
         )
 
     elif config.finetuning_method == "dense":
+        torch.cuda.empty_cache()
         optimizer = torch.optim.SGD(
             model.classifier.parameters(),
             lr=config.learning_rate,
@@ -189,13 +193,13 @@ def main():
             weight_decay=config.weight_decay,
             mask=param_mask
         )
-        # Rebuild scheduler on new optimizer
-        warmup = LinearLR(optimizer, start_factor=0.01, total_iters=5)
-        cosine = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
-        scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
-
     else:
         raise ValueError(f"Unknown finetuning_method: {config.finetuning_method}")
+
+    # Rebuild scheduler on new optimizer
+    warmup = LinearLR(optimizer, start_factor=0.01, total_iters=5)
+    cosine = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
+    scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 
     # CHECKPOINT LOADING FOR MODEL WEIGHTS (optional: must be enabled in config.yaml):
     starting_epoch = 0
