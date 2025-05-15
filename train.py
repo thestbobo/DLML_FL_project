@@ -131,10 +131,12 @@ def main():
             dropout=config.lora_dropout,
         )
         # Wrap the model
+        print("[LoRA] applying LoRA layers to the model...")
         model = apply_lora(model, lora_cfg)
         model = model.to(device)
         torch.cuda.empty_cache()
         # Freeze backbone, leave only LoRA A/B trainable
+        print("[LoRA] freezing backbone (only leaving LoRA layers trainable...")
         for name, p in model.named_parameters():
             p.requires_grad = False
         for p in get_lora_params(model):
