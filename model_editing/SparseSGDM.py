@@ -1,6 +1,7 @@
 import torch
 from torch.optim import SGD
 
+
 class SparseSGDM(SGD):
     """
     Sparse SGD with Momentum (and optional Nesterov), applying a user-provided mask
@@ -50,11 +51,11 @@ class SparseSGDM(SGD):
             loss = closure()
 
         for group in self.param_groups:
-            momentum     = group['momentum']
-            dampening    = group.get('dampening', 0)
-            nesterov     = group.get('nesterov', False)
+            momentum = group['momentum']
+            dampening = group.get('dampening', 0)
+            nesterov = group.get('nesterov', False)
             weight_decay = group['weight_decay']
-            lr           = group['lr']
+            lr = group['lr']
 
             for p in group['params']:
                 if p.grad is None:
