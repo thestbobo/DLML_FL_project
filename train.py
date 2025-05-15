@@ -133,13 +133,12 @@ def main():
         # Wrap the model
         model = apply_lora(model, lora_cfg)
         model = model.to(device)
+        torch.cuda.empty_cache()
         # Freeze backbone, leave only LoRA A/B trainable
         for name, p in model.named_parameters():
             p.requires_grad = False
         for p in get_lora_params(model):
             p.requires_grad = True
-
-        torch.cuda.empty_cache()
 
         # Build optimizer over just LoRA params
         optimizer = SparseSGDM(

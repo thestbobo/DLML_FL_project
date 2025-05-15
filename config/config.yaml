@@ -10,7 +10,7 @@ seed: 42                                              # Random seed for reproduc
 # --------------------------
 batch_size: 256
 val_split: 0.1
-num_workers: 4
+num_workers: 2
 learning_rate: 0.003214
 weight_decay: 0.00005743
 momentum: 0.96
