@@ -1,117 +1,83 @@
-import math
+# LoRA.py
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import math
+from dataclasses import dataclass
+from typing import List, Optional
 
-class LoRALinear(nn.Module):
-    """
-    A drop-in replacement for nn.Linear that adds a LoRA low-rank adapter.
-    """
 
+@dataclass
+class LoraConfig:
+    r: int
+    alpha: int
+    target_modules: List[str]        # substrings of module names to wrap
+    dropout: float = 0.0             # dropout on the LoRA path
+
+
+class LoRALayer(nn.Module):
+    """
+    Wraps an nn.Linear with a low-rank update W' = W + (A @ B) * (alpha / r).
+    Only A and B are trainable.
+    """
     def __init__(self,
-                 original_linear: nn.Linear,
-                 r: int = 4,
-                 alpha: float = 1.0,
+                 orig_linear: nn.Linear,
+                 r: int,
+                 alpha: int,
                  dropout: float = 0.0):
-        """
-        Args:
-            original_linear: the nn.Linear to wrap (its weights/bias are reused)
-            r: rank of the adapter
-            alpha: scaling factor (LoRA paper uses alpha/r scaling)
-            dropout: dropout on adapter input
-        """
         super().__init__()
-        # save original
-        self.in_features  = original_linear.in_features
-        self.out_features = original_linear.out_features
-        self.r            = r
-        self.alpha        = alpha
-        self.scaling      = alpha / r
+        self.orig = orig_linear
+        self.r = r
+        self.alpha = alpha
+        self.scaling = alpha / r
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
-        # reuse original weight & bias (frozen by default)
-        self.weight = original_linear.weight
-        self.bias   = original_linear.bias
-
-        # freeze original parameters
-        self.weight.requires_grad = False
-        if self.bias is not None:
-            self.bias.requires_grad = False
-
-        # LoRA adapters
-        self.lora_A = nn.Parameter(torch.zeros((r, self.in_features)))
-        self.lora_B = nn.Parameter(torch.zeros((self.out_features, r)))
-        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
-
-        self.reset_lora_parameters()
-
-    def reset_lora_parameters(self):
-        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-        nn.init.zeros_(self.lora_B)
+        # LoRA parameters
+        self.A = nn.Parameter(torch.zeros(orig_linear.in_features, r))
+        self.B = nn.Parameter(torch.zeros(r, orig_linear.out_features))
+        # init
+        nn.init.kaiming_uniform_(self.A, a=math.sqrt(5))
+        nn.init.zeros_(self.B)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # original linear output
-        result = F.linear(x, self.weight, self.bias)
-        # LoRA update: (x @ A^T @ B^T) * (alpha/r)
-        lora_out = self.dropout(x) @ self.lora_A.t() @ self.lora_B.t()
-        return result + lora_out * self.scaling
+        # frozen original + low-rank path
+        return self.orig(x) + self.dropout(x @ self.A @ self.B) * self.scaling
 
-def replace_linear_with_lora(
-    module: nn.Module,
-    r: int = 4,
-    alpha: float = 1.0,
-    dropout: float = 0.0,
-    target_module_substrings: list[str] = None
-):
-    """
-    Recursively replaces all nn.Linear layers whose name contains any of
-    `target_module_substrings` (or all if None) with LoRALinear.
-    """
-    for name, child in module.named_children():
-        # decide whether to replace
-        is_linear = isinstance(child, nn.Linear)
-        match_target = (
-            target_module_substrings is None or
-            any(sub in name for sub in target_module_substrings)
-        )
-        if is_linear and match_target:
-            lora = LoRALinear(child, r=r, alpha=alpha, dropout=dropout)
-            setattr(module, name, lora)
-        else:
-            replace_linear_with_lora(
-                child, r=r, alpha=alpha, dropout=dropout,
-                target_module_substrings=target_module_substrings
-            )
 
-def mark_only_lora_as_trainable(model: nn.Module):
-    """
-    Freeze all parameters except LoRA adapters (lora_A and lora_B).
-    """
-    for name, param in model.named_parameters():
-        if "lora_A" in name or "lora_B" in name:
-            param.requires_grad = True
-        else:
-            param.requires_grad = False
+def _get_submodule(root: nn.Module, path: str) -> nn.Module:
+    """Traverse root by dot-separated path to return the submodule."""
+    for attr in path.split('.'):
+        root = getattr(root, attr)
+    return root
 
-def merge_lora_weights(model: nn.Module):
-    """
-    Merge LoRA adapters into the base weights for inference.
-    After merging, the adapters are zeroed out.
-    """
-    for module in model.modules():
-        if isinstance(module, LoRALinear):
-            # W <- W + (B @ A) * scaling
-            delta = module.lora_B @ module.lora_A
-            module.weight.data += delta * module.scaling
-            # zero out adapters so they don't double-count
-            module.lora_A.data.zero_()
-            module.lora_B.data.zero_()
 
-def unmerge_lora_weights(model: nn.Module):
+def _set_submodule(root: nn.Module, path: str, new_mod: nn.Module):
+    """Replace the submodule at `path` under `root` with `new_mod`."""
+    parts = path.split('.')
+    parent = _get_submodule(root, '.'.join(parts[:-1])) if len(parts) > 1 else root
+    setattr(parent, parts[-1], new_mod)
+
+
+def apply_lora(model: nn.Module, cfg: LoraConfig) -> nn.Module:
     """
-    Attempt to rollback merge. NOTE: only works if you saved original weights
-    or if merge was done in a reversible manner.
-    Use with caution.
+    Scan `model` for all nn.Linear whose full name contains any of cfg.target_modules,
+    replace them with LoRALayer(orig_linear, cfg.r, cfg.alpha, cfg.dropout).
+    Returns the wrapped model.
     """
-    raise NotImplementedError(
-        "Unmerge is not generally safe unless you kept a backup of original weights."
-    )
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear) and any(t in name for t in cfg.target_modules):
+            lora_mod = LoRALayer(module, cfg.r, cfg.alpha, cfg.dropout)
+            _set_submodule(model, name, lora_mod)
+    return model
+
+
+def get_lora_params(model: nn.Module) -> List[nn.Parameter]:
+    """
+    Collect and return all LoRA parameters (A & B) in `model`.
+    """
+    params = []
+    for m in model.modules():
+        if isinstance(m, LoRALayer):
+            params += [m.A, m.B]
+    return params
+
