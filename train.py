@@ -10,7 +10,7 @@ from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
 
 from model_editing.TaLoS import compute_fisher_scores, calibrate_mask
 from model_editing.SparseSGDM import SparseSGDM
-from model_editing.LoRA import replace_linear_with_lora, mark_only_lora_as_trainable
+from model_editing.LoRA import LoraConfig, apply_lora, get_lora_params
 
 from models.dino_ViT_b16 import DINO_ViT
 from data.prepare_data import get_cifar100_loaders, split_mask_calibration, get_sparse_loaders
@@ -109,15 +109,6 @@ def main():
     # MODEL DEFINITION
     model = DINO_ViT().to(device)
 
-    if config.finetuning_method.lower() == "lora":
-        replace_linear_with_lora(
-            model,
-            r=config.lora_r,
-            alpha=config.lora_alpha,
-            dropout=config.lora_dropout,
-            target_module_substrings=config.lora_target_modules
-        )
-
     # CHECKPOINT LOADING FOR MODEL WEIGHTS (optional: must be enabled in config.yaml):
     starting_epoch = 0
     best_val_accuracy = 0.0
@@ -151,20 +142,42 @@ def main():
     cosine_scheduler = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
     scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[5])
 
-
-    if config.finetuning_method.lower() == "lora":
-        mark_only_lora_as_trainable(model)
-        optimizer = torch.optim.SGD(
-            filter(lambda p: p.requires_grad, model.parameters()),
-            lr=config.learning_rate,
-            weight_decay=config.weight_decay,
-            momentum=config.momentum
+    # FINE-TUNING SETUP
+    if config.finetuning_method == "lora":
+        # 1) Configure LoRA
+        lora_cfg = LoraConfig(
+            r=config.lora_rank,
+            alpha=config.lora_alpha,
+            target_modules=config.lora_target_modules,  # e.g. ["q_proj","k_proj","v_proj","out_proj"]
+            dropout=config.lora_dropout,
         )
-        warmup_scheduler = LinearLR(optimizer, start_factor=0.01, total_iters=5)
-        cosine_scheduler = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
-        scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[5])
+        # 2) Wrap the model
+        model = apply_lora(model, lora_cfg)
+        # 3) Freeze backbone, leave only LoRA A/B trainable
+        for name, p in model.named_parameters():
+            p.requires_grad = False
+        for p in get_lora_params(model):
+            p.requires_grad = True
 
-    if config.finetuning_method.lower() == "sparse":
+        # 4) Build optimizer over just LoRA params
+        optimizer = SparseSGDM(
+            get_lora_params(model),
+            lr=config.learning_rate,
+            momentum=config.momentum,
+            weight_decay=config.weight_decay,
+            mask=None,  # or supply a mask to sparsify adapters further
+            model=None
+        )
+
+    elif config.finetuning_method == "dense":
+        optimizer = torch.optim.SGD(
+            model.classifier.parameters(),
+            lr=config.learning_rate,
+            momentum=config.momentum,
+            weight_decay=config.weight_decay,
+        )
+
+    elif config.finetuning_method == "talos":
         # splits train loader to get a fraction of the data for mask calibration
         sparse_train_loader, calib_loader = get_sparse_loaders(
             train_loader.dataset,
@@ -175,12 +188,7 @@ def main():
             seed=config.seed
         )
         train_loader = sparse_train_loader
-    else:
-        calib_loader = None
 
-
-    # SPARSE FINE-TUNING SETUP (optional: must be enabled in config.yaml)
-    if config.finetuning_method.lower() == "sparse":
         print("[TaLoS] Computing Fisher scores on calibration set...")
         fisher_scores = compute_fisher_scores(model, calib_loader, criterion, device)
         print(f"[TaLoS] Calibrating mask (sparsity={config.target_sparsity})...")
@@ -207,6 +215,8 @@ def main():
         cosine = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
         scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 
+    else:
+        raise ValueError(f"Unknown finetuning_method: {config.finetuning_method}")
 
     # CHECKPOINT LOADING FOR OPTIMIZER AND SCHEDULER STATES (optional: must be enabled in config.yaml):
     if config.get("checkpoint_path", "") and os.path.exists(config.checkpoint_path):
@@ -214,7 +224,6 @@ def main():
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         print("Optimizer & scheduler state restored")
-
 
     # Save base state for tau (task vector) extraction
     base_state = {n: p.clone().cpu() for n, p in model.named_parameters()}
