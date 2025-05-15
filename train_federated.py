@@ -30,6 +30,7 @@ config.dataset = "CIFAR-100"
 np.random.seed(config.SEED)
 torch.manual_seed(config.SEED)
 
+
 def get_client_datasets():
     full_dataset = load_cifar100()
 
