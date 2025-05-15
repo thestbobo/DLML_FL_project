@@ -1,8 +1,13 @@
+# --------------------------
 # JOB CONFIGURATION
+# --------------------------
+
 wandb_project_folder: "CIFAR-100_centralized"         # Name of the project folder in wandb
 seed: 42                                              # Random seed for reproducibility
 
-# centralized training config
+# --------------------------
+# CENTRALIZED TRAINING CONFIG
+# --------------------------
 batch_size: 256
 val_split: 0.1
 num_workers: 4
@@ -14,10 +19,9 @@ epochs: 50
 checkpoint_path: "/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
 
-# fine-tuning method switch
-finetuning_method: "lora"   # or "sparse" or "lora"
+finetuning_method: "lora"                             # fine-tuning method switch -> "dense" / "lora" / "talos"
 
-# sparse fine-tuning (centralized)
+# talos fine-tuning (centralized)
 nesterov: False                         # enable nesterov acceleration
 dampening: 0                            # fraction of grad to drop from momentum buffer
 target_sparsity: 0.8                    # Target sparsity level (e.g., 80%)
@@ -27,15 +31,14 @@ calib_batch_size: 16                    # for Fisher calibration
 calib_rounds: 5
 
 # LoRA fine-tuning (centralized)
-lora_r: 4
-lora_alpha: 16
-lora_dropout: 0.1
-lora_target_modules:
-  - "q"
-  - "v"
+lora_rank: 8                                                                # dimensionality of the low-rank update matrices (AB)
+lora_alpha: 32                                                              # factor applied to the low-rank update (alpha/r * AB)
+lora_dropout: 0.05                                                          # Dropout probability on the updates
+lora_target_modules: ["q_proj","k_proj","v_proj","out_proj"]                # layers you want to wrap with LoRA adapters
 
-
-# federated training config
+# --------------------------
+# FEDERATED TRAINING CONFIG
+# --------------------------
 NUM_CLIENTS: 100
 CLIENT_FRACTION: 0.1  # 10% of clients selected each round
 LOCAL_EPOCHS: 4
