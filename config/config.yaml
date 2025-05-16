@@ -19,7 +19,7 @@ epochs: 50
 checkpoint_path: '' # "/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
 
-finetuning_method: "talos"                             # fine-tuning method switch -> "dense" / "lora" / "talos"
+finetuning_method: "lora"                             # fine-tuning method switch -> "dense" / "lora" / "talos"
 
 # talos fine-tuning (centralized)
 nesterov: False                         # enable nesterov acceleration
@@ -40,6 +40,7 @@ lora_target_modules:
   # optionally, for adapters in the MLP:
   # - "mlp.fc1"
   # - "mlp.fc2"
+
 # --------------------------
 # FEDERATED TRAINING CONFIG
 # --------------------------
@@ -50,5 +51,7 @@ BATCH_SIZE: 32
 LR: 0.01
 ROUNDS: 100
 IID: True  # Set to False for non-iid
-NC:   # Number of classes per client in non-iid setting
+NC: 2  # Number of classes per client in non-iid setting
 SEED: 42
+CHECKPOINT_PATH: '' # "/content/drive/MyDrive/DL_project/federated_checkpoints/.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
+OUT_CHECKPOINT_PATH: "/content/drive/MyDrive/DL_project/federated_checkpoints"
