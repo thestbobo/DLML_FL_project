@@ -42,7 +42,7 @@ def calibrate_mask(model, fisher_scores, target_sparsity, rounds):
 
         # Update masks
         for name in masks:
-            masks[name] = (fisher_scores[name] >= threshold).float()
+            masks[name] = (fisher_scores[name] <= threshold).float()
 
         # Update target params for next round
         target_params = int(target_params * (1 - target_sparsity / rounds))
