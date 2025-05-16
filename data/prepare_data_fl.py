@@ -1,7 +1,3 @@
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, random_split
-
-import torch
 import numpy as np
 from torchvision import datasets, transforms
 from torch.utils.data import Dataset, Subset
@@ -40,42 +36,50 @@ def split_iid(dataset, num_clients):
 
 def split_noniid(dataset, num_clients, nc=2, seed=42):
     """
-    Non-IID sharding: each client gets data from only `nc` classes.
+    Non-IID sharding: carve the training set into num_clients*nc shards
+    and give each client exactly nc shards (so each client sees only
+    nc distinct classes, but the classes are mixed across shards).
 
     Args:
-        dataset: full CIFAR-100 dataset
-        num_clients: number of clients
-        nc: number of classes per client
-        seed: for reproducibility
+        dataset      : a torchvision Dataset with .__getitem__ returning (_, label)
+        num_clients  : how many clients
+        nc           : how many shards (hence classes) per client
+        seed         : random seed for reproducibility
 
     Returns:
-        List of Subsets, one for each client
+        List[Subset(dataset)] of length num_clients
     """
     random.seed(seed)
-    class_indices = defaultdict(list)
 
+    # Group all indices by their class label
+    class_indices = defaultdict(list)
     for idx, (_, label) in enumerate(dataset):
         class_indices[label].append(idx)
 
-    class_partitions = list(class_indices.values())
-    for lst in class_partitions:
-        random.shuffle(lst)
+    # define how many shards total and compute each shard's size
+    total_samples = len(dataset)
+    total_shards = num_clients * nc
+    shard_size = total_samples // total_shards
+    shards = []
 
-    client_data = [[] for _ in range(num_clients)]
-    class_pool = list(range(100))
-    random.shuffle(class_pool)
+    # for each class, shuffle its indices and chop into shards of 'shard_size'
+    for lbl, idxs in class_indices.items():
+        random.shuffle(idxs)
+        for i in range(0, len(idxs), shard_size):
+            shard = idxs[i: i + shard_size]
+            shards.append(shard)
 
-    shards_per_class = len(dataset) // 100
-    shards_per_client = (nc * shards_per_class) // num_clients
+    # shuffle all shards globally, then assign contiguous nc shards to each client
+    random.shuffle(shards)
+    clients = []
+    for i in range(num_clients):
+        start = i * nc
+        end = (i + 1) * nc
+        # flatten the list of lists into a single list of indices
+        client_idxs = [idx for shard in shards[start:end] for idx in shard]
+        clients.append(Subset(dataset, client_idxs))
 
-    for client_id in range(num_clients):
-        assigned_classes = random.sample(class_pool, nc)
-        for cls in assigned_classes:
-            count = shards_per_class // nc
-            client_data[client_id].extend(class_indices[cls][:count])
-            class_indices[cls] = class_indices[cls][count:]
-
-    return [Subset(dataset, idxs) for idxs in client_data]
+    return clients
 
 
 # Usage Example:
@@ -86,7 +90,7 @@ if __name__ == "__main__":
     iid_clients = split_iid(cifar_dataset, num_clients=100)
 
     # Non-IID with Nc = 5
-    noniid_clients = split_noniid(cifar_dataset, num_clients=100, nc=5)
+    non_iid_clients = split_noniid(cifar_dataset, num_clients=100, nc=5)
 
     print(f"IID Client 0 size: {len(iid_clients[0])}")
-    print(f"Non-IID Client 0 size: {len(noniid_clients[0])}")
+    print(f"Non-IID Client 0 size: {len(non_iid_clients[0])}")
