@@ -19,7 +19,7 @@ epochs: 50
 checkpoint_path: '' # "/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
 
-finetuning_method: "dense"                             # fine-tuning method switch -> "dense" / "lora" / "talos"
+finetuning_method: "talos"                             # fine-tuning method switch -> "dense" / "lora" / "talos"
 
 # talos fine-tuning (centralized)
 nesterov: False                         # enable nesterov acceleration
