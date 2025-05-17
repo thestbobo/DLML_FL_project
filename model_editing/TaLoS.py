@@ -27,10 +27,34 @@ def compute_fisher_scores(model, dataloader, criterion, device):
     return fisher_scores
 
 
-def calibrate_mask(model, fisher_scores, target_sparsity, rounds):
+# iterative pruning, moving threshold (tau) updated each calibration rounds
+def calibrate_mask(fisher_scores, target_sparsity, rounds):
     """
-    Iteratively calibrate masks based on Fisher scores to reach target sparsity.
+    Calibrate binary masks based on Fisher scores to reach target sparsity.
+    The masks are iteratively refined to ensure that the target sparsity is achieved.
     """
+    masks = {n: torch.ones_like(s) for n, s in fisher_scores.items()}
+    total = sum(m.numel() for m in masks.values())
+    for r in range(1, rounds+1):
+        # compute round-r sparsity
+        keep_frac = (1 - target_sparsity) ** (r/rounds)
+        keep_n = int(total * keep_frac)
+
+        # extract tau via top-keep_n
+        all_scores = torch.cat([
+            fisher_scores[n][masks[n].bool()].flatten() for n in masks
+        ])
+        tau = torch.topk(all_scores, keep_n, largest=True).values.min()
+
+        # rebuild mask at this round
+        for n in masks:
+            masks[n] = (fisher_scores[n] >= tau).float()
+
+    return masks
+
+
+# one-shot pruning (fixed threshold) -> not used right now, it's noisy
+def calibrate_mask_one_shot(model, fisher_scores, target_sparsity, rounds):
     masks = {name: torch.ones_like(param) for name, param in model.named_parameters() if param.requires_grad}
     total_params = sum(param.numel() for param in model.parameters() if param.requires_grad)
     target_params = int(total_params * (1 - target_sparsity))       # params to be kept
