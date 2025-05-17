@@ -1,8 +1,10 @@
 import numpy as np
 from torchvision import datasets, transforms
-from torch.utils.data import Dataset, Subset
+from torch.utils.data import Dataset, Subset, DataLoader
 from collections import defaultdict
 import random
+
+from torchvision.datasets import CIFAR100
 
 
 def get_transform():
@@ -17,6 +19,24 @@ def get_transform():
 def load_cifar100(root="./data"):
     transform = get_transform()
     return datasets.CIFAR100(root=root, train=True, download=True, transform=transform)
+
+
+def get_client_datasets(iid, num_clients, nc=2, seed=42):
+    """
+    Load CIFAR-100 dataset and split it into client datasets.
+    """
+    full_dataset = load_cifar100()
+
+    if iid:
+        return split_iid(full_dataset, num_clients)
+    else:
+        return split_noniid(full_dataset, num_clients, nc=nc, seed=seed)
+
+
+def get_test_loader(batch_size):
+    test_transform = get_transform()
+    test_data = CIFAR100(root="./data", train=False, download=True, transform=test_transform)
+    return DataLoader(test_data, batch_size=batch_size, shuffle=False)
 
 
 def split_iid(dataset, num_clients):
