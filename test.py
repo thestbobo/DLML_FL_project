@@ -5,7 +5,6 @@ import random
 import numpy as np
 import torch.nn as nn
 from tqdm import tqdm
-from pathlib import Path
 
 from models.dino_ViT_b16 import DINO_ViT
 from data.prepare_data import get_cifar100_loaders
@@ -50,11 +49,10 @@ def main():
     print("Using device:", device)
 
     # Load config
-    with open("config/config.yaml") as f:
-        default_config = yaml.safe_load(f)
-    config = wandb.config
+    with open("config/config.yaml", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
 
-    set_seed(config.seed)
+    set_seed(config["seed"])
 
     # Load data
     _, _, test_loader = get_cifar100_loaders(config["val_split"], config["batch_size"], config["num_workers"])
