@@ -1,14 +1,24 @@
 import os
-import numpy as np
-import torch
 import yaml
 import wandb
+import torch
+import random
+import numpy as np
 from torch.utils.data import DataLoader
 from models.dino_ViT_b16 import DINO_ViT
 from fl_core.client import local_train, local_train_talos
 from fl_core.server import average_weights_fedavg
 from data.prepare_data_fl import get_client_datasets, get_test_loader
 from project_utils.metrics import get_metrics
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # If using multi-GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def evaluate(model, dataloader):
@@ -44,8 +54,7 @@ def main():
 
     config = wandb.config
     config.NC = config.NC if not config.IID else None
-    np.random.seed(config.seed)
-    torch.manual_seed(config.seed)
+    set_seed(config.seed)
 
     # GPU CHECK
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

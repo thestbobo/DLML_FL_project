@@ -1,12 +1,23 @@
-import torch
-import torch.nn as nn
 import yaml
-from pathlib import Path
-from tqdm import tqdm
+import torch
 import wandb
+import random
+import numpy as np
+import torch.nn as nn
+from tqdm import tqdm
+from pathlib import Path
 
 from models.dino_ViT_b16 import DINO_ViT
 from data.prepare_data import get_cifar100_loaders
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # If using multi-GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def test(model, dataloader, criterion, device, verbose=False):
@@ -40,7 +51,10 @@ def main():
 
     # Load config
     with open("config/config.yaml") as f:
-        config = yaml.safe_load(f)
+        default_config = yaml.safe_load(f)
+    config = wandb.config
+
+    set_seed(config.seed)
 
     # Load data
     _, _, test_loader = get_cifar100_loaders(config["val_split"], config["batch_size"], config["num_workers"])

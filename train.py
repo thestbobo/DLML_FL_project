@@ -1,6 +1,8 @@
 import os
 import wandb
 import yaml
+import random
+import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 
@@ -17,6 +19,13 @@ from data.prepare_data import get_cifar100_loaders, get_sparse_loaders
 from project_utils.metrics import get_metrics
 
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # If using multi-GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def train_one_epoch(model, dataloader, optimizer, criterion, scaler, device, curr_epoch, verbose=False):
@@ -99,6 +108,8 @@ def main():
     # WandB SETUP
     wandb.init(project="CIFAR-100_centralized", config=default_config)
     config = wandb.config
+
+    set_seed(config.seed)
 
     # DATA LOADERS
     train_loader, val_loader, test_loader = get_cifar100_loaders(config.val_split, config.batch_size,
