@@ -5,45 +5,10 @@ import yaml
 import wandb
 from torch.utils.data import DataLoader
 from models.dino_ViT_b16 import DINO_ViT
-from data.prepare_data_fl import load_cifar100, split_iid, split_noniid
-from fl_core.client import local_train
+from fl_core.client import local_train, local_train_talos
 from fl_core.server import average_weights_fedavg
-from data.prepare_data import get_test_transforms  # For test set
-from torchvision.datasets import CIFAR100
+from data.prepare_data_fl import get_client_datasets, get_test_loader
 from project_utils.metrics import get_metrics
-
-# -------------------- CONFIG --------------------
-
-with open("config/config.yaml") as f:
-    default_config = yaml.safe_load(f)
-# ------------------------------------------------
-
-wandb.init(
-    project="Federated-DINO-ViT",
-    config=default_config
-)
-
-config = wandb.config
-config.NC = config.NC if not config.IID else None
-config.model = "DINO ViT-S/16"
-config.dataset = "CIFAR-100"
-np.random.seed(config.SEED)
-torch.manual_seed(config.SEED)
-
-
-def get_client_datasets():
-    full_dataset = load_cifar100()
-
-    if config.IID:
-        return split_iid(full_dataset, config.NUM_CLIENTS)
-    else:
-        return split_noniid(full_dataset, config.NUM_CLIENTS, nc=config.NC, seed=config.SEED)
-
-
-def get_test_loader():
-    test_transform = get_test_transforms()
-    test_data = CIFAR100(root="./data", train=False, download=True, transform=test_transform)
-    return DataLoader(test_data, batch_size=config.BATCH_SIZE, shuffle=False)
 
 
 def evaluate(model, dataloader):
@@ -66,68 +31,135 @@ def evaluate(model, dataloader):
     return metrics
 
 
-def train_federated():
-    # cuda status
+def main():
+    # LOAD CONFIG
+    with open("config/config.yaml") as f:
+        default_config = yaml.safe_load(f)
+
+    # WandB CONFIG
+    wandb.init(
+        project="Federated-DINO-ViT",
+        config=default_config
+    )
+
+    config = wandb.config
+    config.NC = config.NC if not config.IID else None
+    np.random.seed(config.seed)
+    torch.manual_seed(config.seed)
+
+    # GPU CHECK
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device: ", device)
 
     mode = "IID" if config.IID else f"Non-IID Nc={config.NC}"
     print(f"{'=' * 10} Federated Training Start ({mode}) {'=' * 10}")
 
-    # Load data
-    client_datasets = get_client_datasets()
-    test_loader = get_test_loader()
+    # CHECKPOINT LOADING (optional, to be enabled in config)
+    starting_round = 0
+    best_test_accuracy = 0.0
+
+    ckpt_path = config.get("checkpoint_path", "")
+    global_model = DINO_ViT(num_classes=100, pretrained=True)
+
+    if ckpt_path and os.path.exists(ckpt_path):
+        print(f"Loading checkpoint from {ckpt_path} …")
+        ckpt = torch.load(ckpt_path, map_location=device)
+
+        method = ckpt.get("finetuning_method", "").lower()
+        strict = (method != "lora")  # example for other methods
+        global_model.load_state_dict(ckpt["model_state_dict"], strict=strict)
+
+        starting_round = ckpt.get("round", 0)
+        best_test_accuracy = ckpt.get("test_metrics", {}) \
+            .get("top_1_accuracy", 0.0)
+
+        print(f"Resumed from round {starting_round} "
+              f"with best test@1 = {best_test_accuracy * 100:.2f}%")
+    else:
+        print("No valid checkpoint found; starting from scratch.")
+
+    mode = "IID" if config.IID else f"Non-IID Nc={config.NC}"
+    print(f"{'=' * 10} Federated Training Start ({mode}) {'=' * 10}")
+
+    # DATA PREPARATION
+    client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.seed)
+    test_loader = get_test_loader(batch_size=config.BATCH_SIZE)
 
     # Initialize global model
-    global_model = DINO_ViT(num_classes=100, pretrained=True)
     global_weights = global_model.state_dict()
 
-    for round in range(1, config.ROUNDS + 1):
-        print(f"\n--- Round {round} ---")
+    for t_round in range(starting_round + 1, config.ROUNDS + 1):
+        print(f"\n--- Round {t_round} ---")
 
-        # Sample clients
+        # sample clients
         m = max(int(config.CLIENT_FRACTION * config.NUM_CLIENTS), 1)
         selected_clients = np.random.choice(config.NUM_CLIENTS, m, replace=False)
 
-        local_weights = []
-        num_samples_list = []
-        for client_id in selected_clients:
+        local_weights, num_samples_list = [], []
+        for cid in selected_clients:
+            # init local model
             local_model = DINO_ViT(num_classes=100, pretrained=False)
             local_model.load_state_dict(global_weights)
 
-            client_data = DataLoader(client_datasets[client_id], batch_size=config.BATCH_SIZE, shuffle=True)
-            updated_weights = local_train(local_model, client_data, config.LOCAL_EPOCHS, config.LR, device)
-            local_weights.append(updated_weights)
-            num_samples_list.append(len(client_datasets[client_id]))
+            loader = DataLoader(client_datasets[cid],
+                                batch_size=config.BATCH_SIZE,
+                                shuffle=True,
+                                num_workers=2,
+                                pin_memory=True)
 
-        # Average updates
+            # dispatch fine-tuning method
+            method = config.FINETUNE_METHOD.lower()
+            if method == "dense":
+                w = local_train(
+                    local_model, loader,
+                    epochs=config.LOCAL_EPOCHS,
+                    lr=config.LR,
+                    device=device
+                )
+            elif method == "talos":
+                w = local_train_talos(
+                    local_model, loader,
+                    epochs=config.LOCAL_EPOCHS,
+                    lr=config.LR,
+                    device=device,
+                    target_sparsity=config.TALOS_TARGET_SPARSITY,
+                    prune_rounds=config.TALOS_PRUNE_ROUNDS,
+                    fisher_loader=None  # defaults to training loader
+                )
+            else:
+                raise ValueError(f"Unknown FINETUNE_METHOD '{method}'")
+
+            local_weights.append(w)
+            num_samples_list.append(len(client_datasets[cid]))
+
+        # AGGREGATION OF THE CLIENTS UPDATES-> FedAvg
         global_weights = average_weights_fedavg(local_weights, num_samples_list)
         global_model.load_state_dict(global_weights)
 
-        # Evaluate global model
+        # VALIDATION OF GLOBAL MODEL
         metrics = evaluate(global_model, test_loader)
 
         # log round results
         wandb.log({
-            "round": round,
+            "round": t_round,
             **{f"global_test_{k}": v for k, v in metrics.items()},
             "clients_participated": len(selected_clients),
             "samples_used": sum(len(client_datasets[cid]) for cid in selected_clients)
         })
 
-        # Save model checkpoint every 10 rounds (or customize)
-        if round % 5 == 0 or round == config.ROUNDS:
-            checkpoint_dir = "/content/DLML_FL_project/checkpoints"
+        # CHECKPOINT SAVING (every 5 rounds)
+        if t_round % 5 == 0 or t_round == config.ROUNDS:
+            checkpoint_dir = config.OUT_CHECKPOINT_PATH
             os.makedirs(checkpoint_dir, exist_ok=True)
-            checkpoint_path = os.path.join(checkpoint_dir, f"fl_model_round_{round}.pth")
+            checkpoint_path = os.path.join(checkpoint_dir, f"fl_model_round_{t_round}.pth")
             torch.save(global_model.state_dict(), checkpoint_path)
             print(f"Saved checkpoint: {checkpoint_path}")
 
-        print(f"Round {round}: Global Test Metrics = {metrics}")
+        print(f"Round {t_round}: Global Test Metrics = {metrics}")
 
     print(f"\n{'=' * 10} Training Completed {'=' * 10}")
     return global_model
 
 
 if __name__ == "__main__":
-    train_federated()
+    main()
