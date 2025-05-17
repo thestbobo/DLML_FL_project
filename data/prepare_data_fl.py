@@ -1,6 +1,6 @@
 import numpy as np
 from torchvision import datasets, transforms
-from torch.utils.data import Dataset, Subset, DataLoader
+from torch.utils.data import Subset, DataLoader
 from collections import defaultdict
 import random
 

@@ -65,19 +65,3 @@ def get_sparse_loaders(full_train_dataset, calib_frac, calib_batch_size, batch_s
         batch_size=batch_size, shuffle=True, num_workers=num_workers
     )
     return train_loader, calib_loader
-
-
-def split_mask_calibration(dataset, calib_frac, seed=42):
-    """
-    Split off a small fraction for mask calibration from a dataset.
-    Returns (calib_subset, main_subset).
-    """
-    total = len(dataset)
-    calib_size = int(total * calib_frac)
-    indices = list(range(total))
-    # reproducible shuffle
-    generator = torch.Generator().manual_seed(seed)
-    indices = torch.randperm(total, generator=generator).tolist()
-    calib_idx = indices[:calib_size]
-    train_idx = indices[calib_size:]
-    return Subset(dataset, calib_idx), Subset(dataset, train_idx)
