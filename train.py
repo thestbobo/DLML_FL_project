@@ -168,6 +168,8 @@ def main():
             model=None
         )
 
+
+
     elif config.finetuning_method == "dense":
         torch.cuda.empty_cache()
         optimizer = torch.optim.SGD(
@@ -218,6 +220,14 @@ def main():
     cosine = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
     scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 
+    if config.finetuning_method == "lora":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=0.5,  # dimezza il LR
+            patience=3,  # aspetta 3 epoche di plateau
+            verbose=True
+        )
     # CHECKPOINT LOADING FOR MODEL WEIGHTS (optional: must be enabled in config.yaml):
     starting_epoch = 0
     best_val_accuracy = 0.0
@@ -248,7 +258,12 @@ def main():
         train_loss, train_metrics = train_one_epoch(model, train_loader, optimizer, criterion, scaler, device, epoch + 1,
                                                     verbose=True)
         val_loss, val_metrics = validate(model, val_loader, criterion, device, verbose=True)
-        scheduler.step()
+
+        # debugging lora
+        if config.finetuning_method == "lora":
+            scheduler.step(val_loss)
+        else:
+            scheduler.step()
 
         print(
             f"Epoch {epoch + 1}/{config.epochs} | Train Loss: {train_loss:.4f} | Train Metrics: {train_metrics} | "
