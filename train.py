@@ -165,6 +165,12 @@ def main():
 
     elif config.finetuning_method == "dense":
         torch.cuda.empty_cache()
+
+        for name, p in model.named_parameters():
+            p.requires_grad = False
+        for p in model.classifier.parameters():
+            p.requires_grad = True
+
         optimizer = torch.optim.SGD(
             model.classifier.parameters(),
             lr=config.learning_rate,
