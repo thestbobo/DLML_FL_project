@@ -166,10 +166,11 @@ def main():
     elif config.finetuning_method == "dense":
         torch.cuda.empty_cache()
 
-        for name, p in model.named_parameters():
-            p.requires_grad = False
-        for p in model.classifier.parameters():
-            p.requires_grad = True
+        """Yall can uncomment below if you don't want to freeze other layers"""
+        # for name, p in model.named_parameters():
+        #     p.requires_grad = False
+        # for p in model.classifier.parameters():
+        #     p.requires_grad = True
 
         optimizer = torch.optim.SGD(
             model.classifier.parameters(),
