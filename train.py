@@ -255,8 +255,8 @@ def main():
             f"Val Loss: {val_loss:.4f} | Val Metrics: {val_metrics}")
 
         wandb.log({
-            "lr": lr,
-            "grad_norm": grad_norm,
+            "lr": scheduler.get_last_lr()[0],
+            "grad_norm": sum(p.grad.data.norm(2).item() ** 2 for p in model.parameters() if p.grad is not None) ** 0.5,
             "epoch": epoch + 1,
             "train_loss": train_loss,
             **{f"train_{k}": v for k, v in train_metrics.items()},
