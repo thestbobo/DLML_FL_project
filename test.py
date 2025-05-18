@@ -1,3 +1,4 @@
+import os
 import yaml
 import torch
 import wandb
@@ -62,7 +63,7 @@ def main():
 
     # Load checkpoint
     checkpoint_name = "centralized_checkpoint_epoch_50.pth"
-    checkpoint_path = "checkpoints\\sparse\\" + checkpoint_name   # two separate folders for sparse and no_sparse
+    checkpoint_path = os.path.join("checkpoints", "sparse", checkpoint_name)   # two separate folders for sparse and no_sparse
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
 
