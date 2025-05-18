@@ -153,6 +153,11 @@ def main():
         for p in get_lora_params(model):
             p.requires_grad = True
 
+        # ── Unfreeze classification head ──
+        for name, p in model.named_parameters():
+            if "classifier" in name or "head" in name:
+                p.requires_grad = True
+
         # Build optimizer over just LoRA params
         optimizer = SparseSGDM(
             get_lora_params(model),
