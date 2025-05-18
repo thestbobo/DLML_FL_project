@@ -170,13 +170,6 @@ def main():
 
     elif config.finetuning_method == "dense":
         torch.cuda.empty_cache()
-
-        """Yall can uncomment below if you don't want to freeze other layers"""
-        # for name, p in model.named_parameters():
-        #     p.requires_grad = False
-        # for p in model.classifier.parameters():
-        #     p.requires_grad = True
-
         optimizer = torch.optim.SGD(
             model.classifier.parameters(),
             lr=config.learning_rate,
@@ -262,6 +255,8 @@ def main():
             f"Val Loss: {val_loss:.4f} | Val Metrics: {val_metrics}")
 
         wandb.log({
+            "lr": lr,
+            "grad_norm": grad_norm,
             "epoch": epoch + 1,
             "train_loss": train_loss,
             **{f"train_{k}": v for k, v in train_metrics.items()},
@@ -279,7 +274,7 @@ def main():
                           'train_metrics': train_metrics,
                           'finetuning_method': config.finetuning_method}
             os.makedirs(config['out_checkpoint_dir'], exist_ok=True)
-            torch.save(checkpoint, os.path.join(config['out_checkpoint_dir'], f"centralized_checkpoint_{config.finetuning_method}_epoch_{epoch + 1}.pth"))
+            torch.save(checkpoint, os.path.join(config['out_checkpoint_dir'], f"centralized_checkpoint_epoch_{epoch + 1}.pth"))
             print(f'Checkpoint saved at epoch {epoch + 1} with Val Metrics={val_metrics}')
 
         # BEST CHECKPOINT SAVING
@@ -293,7 +288,7 @@ def main():
                                'best_train_metrics': train_metrics,
                                'finetuning_method': config.finetuning_method}
             os.makedirs(config['out_checkpoint_dir'], exist_ok=True)
-            torch.save(best_checkpoint, os.path.join(config['out_checkpoint_dir'], f"best_centralized_checkpoint_{config.finetuning_method}_epoch_{epoch + 1}.pth"))
+            torch.save(best_checkpoint, os.path.join(config['out_checkpoint_dir'], f"best_centralized_checkpoint_epoch_{epoch + 1}.pth"))
             print(f'Best model saved with Val Top-1 Accuracy={best_val_accuracy*100:.2f}%')
 
     # EXTRACT SPARSE TASK VECTOR (TAU)
