@@ -274,7 +274,7 @@ def main():
                           'train_metrics': train_metrics,
                           'finetuning_method': config.finetuning_method}
             os.makedirs(config['out_checkpoint_dir'], exist_ok=True)
-            torch.save(checkpoint, os.path.join(config['out_checkpoint_dir'], f"centralized_checkpoint_epoch_{epoch + 1}.pth"))
+            torch.save(checkpoint, os.path.join(config['out_checkpoint_dir'], f"centralized_checkpoint_{config.finetuning_method}_epoch_{epoch + 1}.pth"))
             print(f'Checkpoint saved at epoch {epoch + 1} with Val Metrics={val_metrics}')
 
         # BEST CHECKPOINT SAVING
@@ -288,7 +288,7 @@ def main():
                                'best_train_metrics': train_metrics,
                                'finetuning_method': config.finetuning_method}
             os.makedirs(config['out_checkpoint_dir'], exist_ok=True)
-            torch.save(best_checkpoint, os.path.join(config['out_checkpoint_dir'], f"best_centralized_checkpoint_epoch_{epoch + 1}.pth"))
+            torch.save(best_checkpoint, os.path.join(config['out_checkpoint_dir'], f"best_centralized_checkpoint_{config.finetuning_method}_epoch_{epoch + 1}.pth"))
             print(f'Best model saved with Val Top-1 Accuracy={best_val_accuracy*100:.2f}%')
 
     # EXTRACT SPARSE TASK VECTOR (TAU)
