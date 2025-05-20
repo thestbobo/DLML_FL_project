@@ -63,7 +63,7 @@ def main():
 
     # Load checkpoint
     checkpoint_name = "centralized_checkpoint_epoch_50.pth"
-    checkpoint_path = os.path.join("checkpoints", "sparse", checkpoint_name)   # two separate folders for sparse and no_sparse
+    checkpoint_path = os.path.join("checkpoints", "sparse_bigger_than", checkpoint_name)   # two separate folders for sparse and dense
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
 
