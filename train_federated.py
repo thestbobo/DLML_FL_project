@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import yaml
 import wandb
+import random
 from torch.utils.data import DataLoader
 from models.dino_ViT_b16 import DINO_ViT
 from data.prepare_data_fl import load_cifar100, split_iid, split_noniid
@@ -17,6 +18,15 @@ from project_utils.metrics import get_metrics
 with open("config/config.yaml") as f:
     config = yaml.safe_load(f)
 # ------------------------------------------------
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # If using multi-GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 wandb.init(
@@ -34,6 +44,9 @@ wandb.init(
         "nc": config["NC"] if not config["IID"] else None
     }
 )
+
+
+set_seed(config.seed)
 
 
 def get_client_datasets():

@@ -1,5 +1,7 @@
 # JOB CONFIGURATION
 
+seed: 42
+
 # centralized training config
 batch_size: 256
 val_split: 0.1

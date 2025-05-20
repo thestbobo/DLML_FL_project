@@ -1,9 +1,12 @@
 import os
+import yaml
+import wandb
+import random
 
 import torch
-import wandb
 import torch.nn as nn
-import yaml
+import numpy as np
+
 from tqdm import tqdm
 from pathlib import Path
 from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
@@ -11,6 +14,15 @@ from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
 from models.dino_ViT_b16 import DINO_ViT
 from data.prepare_data import get_cifar100_loaders
 from project_utils.metrics import get_metrics
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # If using multi-GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def train_one_epoch(model, dataloader, optimizer, criterion, scaler, device, curr_epoch, verbose=False):
@@ -93,6 +105,8 @@ def main():
     # WANDB logs setup
     wandb.init(project="CIFAR-100_centralized", config=default_config)
     config = wandb.config
+
+    set_seed(config.seed)
 
     # DATA
     train_loader, val_loader, test_loader = get_cifar100_loaders(config.val_split, config.batch_size,
