@@ -114,7 +114,7 @@ def main():
 
     # model definition
     model = DINO_ViT().to(device)
-    criterion = nn.CrossEntropyLoss().to(device)
+    criterion = nn.CrossEntropyLoss(label_smoothing=config.label_smoothing).to(device)
     scaler = torch.amp.GradScaler('cuda')
     optimizer = torch.optim.SGD(model.classifier.parameters(),
                                 lr=config.learning_rate,

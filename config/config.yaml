@@ -9,6 +9,7 @@ num_workers: 2
 learning_rate: 0.003214
 weight_decay: 0.00005743
 momentum: 0.96
+label_smoothing: 0
 t_max: 50
 epochs: 50
 checkpoint_save: False
