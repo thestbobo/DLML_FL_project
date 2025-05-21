@@ -1,12 +1,23 @@
-import torch
-import torch.nn as nn
+import os
 import yaml
-from pathlib import Path
-from tqdm import tqdm
+import torch
 import wandb
+import random
+import numpy as np
+import torch.nn as nn
+from tqdm import tqdm
 
 from models.dino_ViT_b16 import DINO_ViT
 from data.prepare_data import get_cifar100_loaders
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # If using multi-GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def test(model, dataloader, criterion, device, verbose=False):
@@ -39,8 +50,10 @@ def main():
     print("Using device:", device)
 
     # Load config
-    with open("config/config.yaml") as f:
+    with open("config/config.yaml", encoding="utf-8") as f:
         config = yaml.safe_load(f)
+
+    set_seed(config["seed"])
 
     # Load data
     _, _, test_loader = get_cifar100_loaders(config["val_split"], config["batch_size"], config["num_workers"])
@@ -49,26 +62,33 @@ def main():
     model = DINO_ViT().to(device)
 
     # Load checkpoint
-    checkpoint = torch.load("best_model.pth", map_location=device)
+    checkpoint_name = "centralized_checkpoint_epoch_50.pth"
+    checkpoint_path = os.path.join("checkpoints", "sparse_bigger_than", checkpoint_name)   # two separate folders for sparse and dense
+    checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
-    print(f"Loaded model from epoch {checkpoint['epoch']} with val acc: {checkpoint['best_val_accuracy']*100:.2f}%")
+
+    if checkpoint_name[0:4] == "best":
+        val_acc = checkpoint.get('best_val_metrics', {}).get('top_1_accuracy', 0.0)
+    else:
+        val_acc = checkpoint.get('val_metrics', {}).get('top_1_accuracy', 0.0)
+    print(f"Loaded model from epoch {checkpoint['epoch']} with val acc: {val_acc*100:.2f}%")
 
     # Loss function
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1).to(device)
 
-    # Optional: initialize WandB run for test logging
-    wandb.init(project="CIFAR-100_centralized", name="final_test", config=config)
+    # # Optional: initialize WandB run for test logging
+    # wandb.init(project="CIFAR-100_centralized", name="final_test", config=config)
 
     # Run test
     test_loss, test_acc = test(model, test_loader, criterion, device, verbose=True)
 
-    # Log to WandB
-    wandb.log({
-        "test_loss": test_loss,
-        "test_accuracy": test_acc
-    })
-
-    wandb.finish()
+    # # Log to WandB
+    # wandb.log({
+    #     "test_loss": test_loss,
+    #     "test_accuracy": test_acc
+    # })
+    #
+    # wandb.finish()
 
 
 if __name__ == "__main__":
