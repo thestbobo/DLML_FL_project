@@ -1,4 +1,4 @@
-name: sweep-collab
+name: sweep-collab-dense
 method: bayes  # 'random' or 'grid' are alternatives
 metric:
   name: val_top_1_accuracy
@@ -7,12 +7,12 @@ metric:
 parameters:
   learning_rate:
     distribution: log_uniform_values
-    min: 0.001
-    max: 0.01
+    min: 0.002
+    max: 0.009
   weight_decay:
     distribution: log_uniform_values
-    min: 1e-6
-    max: 1e-3
+    min: 1e-5
+    max: 1e-4
   momentum:
     values: [0.92, 0.94, 0.96]
   batch_size:
