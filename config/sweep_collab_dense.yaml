@@ -1,0 +1,36 @@
+name: sweep-collab-dense-1
+method: bayes  # 'random' or 'grid' are alternatives
+metric:
+  name: val_top_1_accuracy
+  goal: maximize
+
+parameters:
+  learning_rate:
+    distribution: uniform
+    max: 0.016254755213814344
+    min: 0.00008165373969424124
+  weight_decay:
+    distribution: uniform
+    max: 0.02
+    min: 0.00005
+  momentum:
+    max: 1.9
+    min: 0.4
+    distribution: uniform
+  batch_size:
+    values: [256, 384, 512]
+  val_split:
+    values: [0.1]
+  epochs:
+    value: 10
+  num_workers:
+    value: 4
+
+
+early_terminate:
+  type: hyperband
+  min_iter: 5
+
+command:
+  - python
+  - train.py
