@@ -163,7 +163,7 @@ def main():
         })
 
         # CHECKPOINTS SAVING (and best model)
-        if (epoch + 1) % 5 == 0:
+        if (epoch + 1) % 5 == 0 and config.checkpoint_save:
             checkpoint = {'epoch': epoch+1,
                           'model_state_dict': model.state_dict(),
                           'optimizer_state_dict': optimizer.state_dict(),
@@ -174,7 +174,7 @@ def main():
             torch.save(checkpoint, os.path.join(config['out_checkpoint_dir'], f"centralized_checkpoint_epoch_{epoch + 1}.pth"))
             print(f'Checkpoint saved at epoch {epoch + 1} with Val Metrics={val_metrics}')
 
-        if val_metrics["top_1_accuracy"] > best_val_accuracy:
+        if val_metrics["top_1_accuracy"] > best_val_accuracy and config.checkpoint_save:
             best_val_accuracy = val_metrics["top_1_accuracy"]
             best_checkpoint = {'epoch': epoch + 1,
                                'model_state_dict': model.state_dict(),

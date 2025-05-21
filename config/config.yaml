@@ -11,6 +11,7 @@ weight_decay: 0.00005743
 momentum: 0.96
 t_max: 50
 epochs: 50
+checkpoint_save: False
 checkpoint_path: ""           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints/dense_training_branch"
 
