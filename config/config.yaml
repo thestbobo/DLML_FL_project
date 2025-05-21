@@ -1,5 +1,5 @@
 # JOB CONFIGURATION
-
+wandb_project_folder: "CIFAR-100_centralized"
 seed: 42
 
 # centralized training config
