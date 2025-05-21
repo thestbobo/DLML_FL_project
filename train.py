@@ -105,7 +105,7 @@ def main():
     # WANDB logs setup
     wandb.init(project="CIFAR-100_centralized", config=default_config)
     config = wandb.config
-
+    config.checkpoint_save = False
     set_seed(config.seed)
 
     # DATA
