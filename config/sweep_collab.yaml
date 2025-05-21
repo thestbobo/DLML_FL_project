@@ -1,4 +1,4 @@
-name: sweep-collab-dense
+name: sweep-collab
 method: bayes  # 'random' or 'grid' are alternatives
 metric:
   name: val_top_1_accuracy
