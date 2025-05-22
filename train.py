@@ -106,6 +106,7 @@ def main():
     wandb.init(project="CIFAR-100_centralized", config=default_config)
     config = wandb.config
     config.checkpoint_save = False
+    config.num_workers = 2 # set to 2 for collab
     set_seed(config.seed)
 
     # DATA
