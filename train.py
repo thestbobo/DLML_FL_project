@@ -1,6 +1,8 @@
 import os
 import wandb
 import yaml
+import random
+import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 
@@ -17,6 +19,13 @@ from data.prepare_data import get_cifar100_loaders, get_sparse_loaders
 from project_utils.metrics import get_metrics
 
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # If using multi-GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def train_one_epoch(model, dataloader, optimizer, criterion, scaler, device, curr_epoch, verbose=False):
@@ -100,6 +109,8 @@ def main():
     wandb.init(project="CIFAR-100_centralized", config=default_config)
     config = wandb.config
 
+    set_seed(config.seed)
+
     # DATA LOADERS
     train_loader, val_loader, test_loader = get_cifar100_loaders(config.val_split, config.batch_size,
                                                                  config.num_workers)
@@ -142,6 +153,11 @@ def main():
         for p in get_lora_params(model):
             p.requires_grad = True
 
+        # ── Unfreeze classification head ──
+        for name, p in model.named_parameters():
+            if "classifier" in name or "head" in name:
+                p.requires_grad = True
+
         # Build optimizer over just LoRA params
         optimizer = SparseSGDM(
             get_lora_params(model),
@@ -151,6 +167,8 @@ def main():
             mask=None,  # or supply a mask to sparsify adapters further
             model=None
         )
+
+
 
     elif config.finetuning_method == "dense":
         torch.cuda.empty_cache()
@@ -202,6 +220,14 @@ def main():
     cosine = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
     scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 
+    if config.finetuning_method == "lora":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=0.5,  # dimezza il LR
+            patience=3,  # aspetta 3 epoche di plateau
+            verbose=True
+        )
     # CHECKPOINT LOADING FOR MODEL WEIGHTS (optional: must be enabled in config.yaml):
     starting_epoch = 0
     best_val_accuracy = 0.0
@@ -232,13 +258,20 @@ def main():
         train_loss, train_metrics = train_one_epoch(model, train_loader, optimizer, criterion, scaler, device, epoch + 1,
                                                     verbose=True)
         val_loss, val_metrics = validate(model, val_loader, criterion, device, verbose=True)
-        scheduler.step()
+
+        # debugging lora
+        if config.finetuning_method == "lora":
+            scheduler.step(val_loss)
+        else:
+            scheduler.step()
 
         print(
             f"Epoch {epoch + 1}/{config.epochs} | Train Loss: {train_loss:.4f} | Train Metrics: {train_metrics} | "
             f"Val Loss: {val_loss:.4f} | Val Metrics: {val_metrics}")
 
         wandb.log({
+            "lr": scheduler.get_last_lr()[0],
+            "grad_norm": sum(p.grad.data.norm(2).item() ** 2 for p in model.parameters() if p.grad is not None) ** 0.5,
             "epoch": epoch + 1,
             "train_loss": train_loss,
             **{f"train_{k}": v for k, v in train_metrics.items()},

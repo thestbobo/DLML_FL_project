@@ -43,6 +43,7 @@ def main():
     )
 
     config = wandb.config
+    config.NC = config.NC if not config.IID else None
     np.random.seed(config.seed)
     torch.manual_seed(config.seed)
 
