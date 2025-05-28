@@ -93,7 +93,7 @@ def main():
             method = config.FINETUNE_METHOD.lower()
 
             if method == "dense":
-                w, avg_loss, acc = local_train(local_model, loader, epochs=config.LOCAL_EPOCHS, lr=config.LR, device=device, return_metrics=True)
+                w, avg_loss, acc = local_train(local_model, loader, epochs=config.LOCAL_EPOCHS, lr=config.LR, device=device)
             elif method == "talos":
                 w = local_train_talos(local_model, loader, epochs=config.LOCAL_EPOCHS, lr=config.LR, device=device, target_sparsity=config.TALOS_TARGET_SPARSITY, prune_rounds=config.TALOS_PRUNE_ROUNDS, fisher_loader=None)
                 avg_loss, acc = 0.0, 0.0
