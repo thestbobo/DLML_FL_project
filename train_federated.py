@@ -18,6 +18,7 @@ from project_utils.federated_metrics import (
     log_local_metrics
 )
 
+
 def evaluate(model, dataloader):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
@@ -36,6 +37,7 @@ def evaluate(model, dataloader):
     metrics = get_metrics(all_outputs, all_labels)
 
     return metrics
+
 
 def main():
     with open("config/config.yaml") as f:
@@ -131,6 +133,7 @@ def main():
 
     print(f"\n{'=' * 10} Training Completed {'=' * 10}")
     return global_model
+
 
 if __name__ == "__main__":
     main()
