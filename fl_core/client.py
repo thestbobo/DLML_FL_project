@@ -10,7 +10,10 @@ def local_train(model, dataloader, epochs, lr, device):
     model.train()
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+    #optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
+
+    
 
     for epoch in range(epochs):
         for images, labels in dataloader:
