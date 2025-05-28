@@ -24,8 +24,8 @@ def log_global_weight_diff(old_weights, new_weights, round_num):
     total_diff = 0.0
     total_params = 0
     for key in new_weights.keys():
-        p_old = old_weights[key]
-        p_new = new_weights[key]
+        p_old = old_weights[key].cpu()
+        p_new = new_weights[key].cpu()
         if p_old is not None and p_new is not None and p_old.dtype.is_floating_point:
             diff = (p_new - p_old)
             total_diff += (diff ** 2).sum().item()
