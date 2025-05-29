@@ -95,17 +95,24 @@ def main():
         prev_global_weights = global_model.state_dict()
         local_weights, num_samples_list, client_metrics = [], [], []
 
+        # Seleziona un client casuale tra quelli attivi
+        client_to_log = np.random.choice(selected_clients)
+
         for cid in selected_clients:
             local_model = DINO_ViT(num_classes=100, pretrained=False)
             local_model.load_state_dict(global_weights)
 
-            loader = DataLoader(client_datasets[cid], batch_size=config.BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
+            loader = DataLoader(client_datasets[cid], batch_size=config.BATCH_SIZE, shuffle=True, num_workers=2,
+                                pin_memory=True)
             method = config.FINETUNE_METHOD.lower()
 
             if method == "dense":
-                w, avg_loss, acc = local_train(local_model, loader, epochs=config.LOCAL_EPOCHS, lr=config.LR, device=device)
+                w, avg_loss, acc = local_train(local_model, loader, epochs=config.LOCAL_EPOCHS, lr=config.LR,
+                                               device=device)
             elif method == "talos":
-                w = local_train_talos(local_model, loader, epochs=config.LOCAL_EPOCHS, lr=config.LR, device=device, target_sparsity=config.TALOS_TARGET_SPARSITY, prune_rounds=config.TALOS_PRUNE_ROUNDS, fisher_loader=None)
+                w = local_train_talos(local_model, loader, epochs=config.LOCAL_EPOCHS, lr=config.LR, device=device,
+                                      target_sparsity=config.TALOS_TARGET_SPARSITY,
+                                      prune_rounds=config.TALOS_PRUNE_ROUNDS, fisher_loader=None)
                 avg_loss, acc = 0.0, 0.0
             else:
                 raise ValueError(f"Unknown FINETUNE_METHOD '{method}'")
@@ -114,11 +121,17 @@ def main():
             num_samples_list.append(len(client_datasets[cid]))
             client_metrics.append({"client_id": cid, "loss": avg_loss, "accuracy": acc})
 
-            sample_batch = next(iter(loader))
-            log_model_gradient_norm(local_model, torch.nn.CrossEntropyLoss(), sample_batch, device, t_round)
+            # Logga solo il client selezionato
+            if cid == client_to_log:
+                sample_batch = next(iter(loader))
+                log_model_gradient_norm(local_model, torch.nn.CrossEntropyLoss(), sample_batch, device, t_round)
+                wandb.log({
+                    f"client_{cid}/local_loss": avg_loss,
+                    f"client_{cid}/local_accuracy": acc,
+                    "round": t_round
+                })
 
         log_local_weight_norms(local_weights, t_round)
-        log_local_metrics(client_metrics, t_round)
         global_weights = average_weights_fedavg(local_weights, num_samples_list)
         log_global_weight_diff(prev_global_weights, global_weights, t_round)
         global_model.load_state_dict(global_weights)
@@ -140,7 +153,7 @@ def main():
             print(f"Saved checkpoint: {checkpoint_path}")
 
         print(f"Round {t_round}: Global Test Metrics = {metrics}")
-|       print(f"Round {t_round}: Global Loss = {metrics['global_loss']}")
+        print(f"Round {t_round}: Global Loss = {metrics['global_loss']}")
 
     print(f"\n{'=' * 10} Training Completed {'=' * 10}")
     return global_model
