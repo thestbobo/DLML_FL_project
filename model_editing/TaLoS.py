@@ -48,7 +48,7 @@ def calibrate_mask(fisher_scores, target_sparsity, rounds):
 
         # rebuild mask at this round
         for n in masks:
-            masks[n] = (fisher_scores[n] >= tau).float()
+            masks[n] = (fisher_scores[n] <= tau).float()
 
     return masks
 

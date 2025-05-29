@@ -153,6 +153,11 @@ def main():
         for p in get_lora_params(model):
             p.requires_grad = True
 
+        # ── Unfreeze classification head ──
+        for name, p in model.named_parameters():
+            if "classifier" in name or "head" in name:
+                p.requires_grad = True
+
         # Build optimizer over just LoRA params
         optimizer = SparseSGDM(
             get_lora_params(model),
@@ -163,15 +168,10 @@ def main():
             model=None
         )
 
+
+
     elif config.finetuning_method == "dense":
         torch.cuda.empty_cache()
-
-        """Yall can uncomment below if you don't want to freeze other layers"""
-        # for name, p in model.named_parameters():
-        #     p.requires_grad = False
-        # for p in model.classifier.parameters():
-        #     p.requires_grad = True
-
         optimizer = torch.optim.SGD(
             model.classifier.parameters(),
             lr=config.learning_rate,
@@ -220,6 +220,14 @@ def main():
     cosine = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
     scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 
+    if config.finetuning_method == "lora":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=0.5,  # dimezza il LR
+            patience=3,  # aspetta 3 epoche di plateau
+            verbose=True
+        )
     # CHECKPOINT LOADING FOR MODEL WEIGHTS (optional: must be enabled in config.yaml):
     starting_epoch = 0
     best_val_accuracy = 0.0
@@ -250,13 +258,20 @@ def main():
         train_loss, train_metrics = train_one_epoch(model, train_loader, optimizer, criterion, scaler, device, epoch + 1,
                                                     verbose=True)
         val_loss, val_metrics = validate(model, val_loader, criterion, device, verbose=True)
-        scheduler.step()
+
+        # debugging lora
+        if config.finetuning_method == "lora":
+            scheduler.step(val_loss)
+        else:
+            scheduler.step()
 
         print(
             f"Epoch {epoch + 1}/{config.epochs} | Train Loss: {train_loss:.4f} | Train Metrics: {train_metrics} | "
             f"Val Loss: {val_loss:.4f} | Val Metrics: {val_metrics}")
 
         wandb.log({
+            "lr": scheduler.get_last_lr()[0],
+            "grad_norm": sum(p.grad.data.norm(2).item() ** 2 for p in model.parameters() if p.grad is not None) ** 0.5,
             "epoch": epoch + 1,
             "train_loss": train_loss,
             **{f"train_{k}": v for k, v in train_metrics.items()},
@@ -274,7 +289,7 @@ def main():
                           'train_metrics': train_metrics,
                           'finetuning_method': config.finetuning_method}
             os.makedirs(config['out_checkpoint_dir'], exist_ok=True)
-            torch.save(checkpoint, os.path.join(config['out_checkpoint_dir'], f"centralized_checkpoint_{config.finetuning_method}_epoch_{epoch + 1}.pth"))
+            torch.save(checkpoint, os.path.join(config['out_checkpoint_dir'], f"centralized_checkpoint_epoch_{epoch + 1}.pth"))
             print(f'Checkpoint saved at epoch {epoch + 1} with Val Metrics={val_metrics}')
 
         # BEST CHECKPOINT SAVING
@@ -288,7 +303,7 @@ def main():
                                'best_train_metrics': train_metrics,
                                'finetuning_method': config.finetuning_method}
             os.makedirs(config['out_checkpoint_dir'], exist_ok=True)
-            torch.save(best_checkpoint, os.path.join(config['out_checkpoint_dir'], f"best_centralized_checkpoint_{config.finetuning_method}_epoch_{epoch + 1}.pth"))
+            torch.save(best_checkpoint, os.path.join(config['out_checkpoint_dir'], f"best_centralized_checkpoint_epoch_{epoch + 1}.pth"))
             print(f'Best model saved with Val Top-1 Accuracy={best_val_accuracy*100:.2f}%')
 
     # EXTRACT SPARSE TASK VECTOR (TAU)
