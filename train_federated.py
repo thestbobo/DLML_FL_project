@@ -24,17 +24,27 @@ def evaluate(model, dataloader):
     model.eval()
     model.to(device)
     all_outputs, all_labels = [], []
+    total_loss = 0.0
+    criterion = torch.nn.CrossEntropyLoss()
+
 
     with torch.no_grad():
         for x, y in dataloader:
             x, y = x.to(device), y.to(device)
             outputs = model(x)
+            loss = criterion(outputs, y)
+            total_loss += loss.item() * y.size(0)
             all_outputs.append(outputs)
             all_labels.append(y)
 
     all_outputs = torch.cat(all_outputs)
     all_labels = torch.cat(all_labels)
+
     metrics = get_metrics(all_outputs, all_labels)
+    avg_loss = total_loss / len(dataloader.dataset)
+    metrics["global_loss"] = avg_loss
+
+
 
     return metrics
 
@@ -130,6 +140,7 @@ def main():
             print(f"Saved checkpoint: {checkpoint_path}")
 
         print(f"Round {t_round}: Global Test Metrics = {metrics}")
+|       print(f"Round {t_round}: Global Loss = {metrics['global_loss']}")
 
     print(f"\n{'=' * 10} Training Completed {'=' * 10}")
     return global_model
