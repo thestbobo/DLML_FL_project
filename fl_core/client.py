@@ -12,6 +12,8 @@ def local_train(model, dataloader, epochs, lr, device):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
 
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.5)
+
     total_loss = 0.0
     total_correct = 0
     total_samples = 0
@@ -32,6 +34,8 @@ def local_train(model, dataloader, epochs, lr, device):
             preds = outputs.argmax(dim=1)
             total_correct += preds.eq(labels).sum().item()
             total_samples += batch_size
+
+         scheduler.step()
 
     avg_loss = total_loss / total_samples
     accuracy = total_correct / total_samples
