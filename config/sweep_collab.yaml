@@ -1,4 +1,4 @@
-name: sweep-collab
+name: sweep-29-05-2025
 method: bayes  # 'random' or 'grid' are alternatives
 metric:
   name: val_top_1_accuracy
@@ -7,22 +7,23 @@ metric:
 parameters:
   learning_rate:
     distribution: log_uniform_values
-    min: 0.001
-    max: 0.01
+    min: 0.0028
+    max: 0.0048
   weight_decay:
     distribution: log_uniform_values
-    min: 1e-6
-    max: 1e-3
+    min: 0.00005
+    max: 0.001
   momentum:
-    values: [0.92, 0.94, 0.96]
+    min: 0.92
+    max: 0.96
   batch_size:
-    values: [256, 384, 512]
+    values: [256, 384]
   val_split:
     values: [0.1]
   epochs:
     value: 10
   num_workers:
-    value: 4
+    value: 2
 
 
 early_terminate:
