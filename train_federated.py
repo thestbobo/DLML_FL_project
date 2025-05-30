@@ -86,6 +86,11 @@ def main():
     test_loader = get_test_loader(batch_size=config.BATCH_SIZE)
     global_weights = global_model.state_dict()
 
+    # get LR info for scheduler configuration
+    base_lr = config.LR
+    decay = config.LR_DECAY
+    warmup_eps = config.WARMUP_EPOCHS
+
     # federated loop
     for t_round in range(starting_round + 1, config.ROUNDS + 1):
         print(f"\n--- Round {t_round} ---")
@@ -101,6 +106,8 @@ def main():
         local_weights, num_samples_list = [], []
         client_to_log = np.random.choice(selected_clients)   # logging local metrics for one random active client
 
+        lr_round = base_lr * (decay ** (t_round - 1))
+
         for cid in selected_clients:
             local_model = DINO_ViT(num_classes=100, pretrained=False)
             local_model.load_state_dict(global_weights)
@@ -109,13 +116,24 @@ def main():
                                 pin_memory=True)
 
             method = config.FINETUNE_METHOD.lower()
+
             if method == "dense":
-                w, avg_loss, acc = local_train(local_model, loader, epochs=config.LOCAL_EPOCHS, lr=config.LR,
-                                               device=device)
+                w, avg_loss, acc = local_train(local_model,
+                                               loader,
+                                               epochs=config.LOCAL_EPOCHS,
+                                               lr=lr_round,
+                                               device=device,
+                                               warmup_epochs=warmup_eps)
             elif method == "talos":
-                w = local_train_talos(local_model, loader, epochs=config.LOCAL_EPOCHS, lr=config.LR, device=device,
+                w = local_train_talos(local_model,
+                                      loader,
+                                      epochs=config.LOCAL_EPOCHS,
+                                      lr=lr_round,
+                                      device=device,
+                                      warmup_epochs=warmup_eps,
                                       target_sparsity=config.TALOS_TARGET_SPARSITY,
-                                      prune_rounds=config.TALOS_PRUNE_ROUNDS, fisher_loader=None)
+                                      prune_rounds=config.TALOS_PRUNE_ROUNDS,
+                                      fisher_loader=None)
                 avg_loss, acc = 0.0, 0.0
             else:
                 raise ValueError(f"Unknown FINETUNE_METHOD '{method}'")

@@ -49,6 +49,8 @@ CLIENT_FRACTION: 0.1  # 10% of clients selected each round
 LOCAL_EPOCHS: 3
 BATCH_SIZE: 64
 LR: 0.001
+LR_DECAY: 0.99        # per-round global lr decay factor
+WARMUP_EPOCHS: 5      # local warm-up scheduler
 ROUNDS: 100
 IID: False  # Set to False for non-iid
 NC: 2  # Number of classes per client in non-iid setting
