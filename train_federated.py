@@ -1,4 +1,5 @@
 import os
+import copy
 import numpy as np
 import torch
 import yaml
@@ -84,7 +85,8 @@ def main():
     # prepare data
     client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.seed)
     test_loader = get_test_loader(batch_size=config.BATCH_SIZE)
-    global_weights = global_model.state_dict()
+
+        # global_weights = global_model.state_dict()
 
     # get LR info for scheduler configuration
     base_lr = config.LR
@@ -109,8 +111,10 @@ def main():
         lr_round = base_lr * (decay ** (t_round - 1))
 
         for cid in selected_clients:
-            local_model = DINO_ViT(num_classes=100, pretrained=False)
-            local_model.load_state_dict(global_weights)
+            # local_model = DINO_ViT(num_classes=100, pretrained=False)
+            # local_model.load_state_dict(global_weights)
+            print(f"Training client -> {cid}")
+            local_model = copy.deepcopy(global_model)
 
             loader = DataLoader(client_datasets[cid], batch_size=config.BATCH_SIZE, shuffle=True, num_workers=2,
                                 pin_memory=True)
