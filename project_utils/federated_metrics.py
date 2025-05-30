@@ -35,7 +35,9 @@ def log_global_weight_diff(prev_weights, new_weights, round_num):
     """
     total_sq = 0.0
     for key in prev_weights.keys():
-        diff = prev_weights[key] - new_weights[key]
+        pw = prev_weights[key].cpu()
+        nw = new_weights[key].cpu()
+        diff = pw - nw
         total_sq += diff.norm().item() ** 2
     diff_norm = total_sq ** 0.5
     wandb.log({
