@@ -34,8 +34,7 @@ def local_train(model, dataloader, epochs, lr, device):
             preds = outputs.argmax(dim=1)
             total_correct += preds.eq(labels).sum().item()
             total_samples += batch_size
-
-         scheduler.step()
+        scheduler.step()
 
     avg_loss = total_loss / total_samples
     accuracy = total_correct / total_samples

@@ -1,5 +1,6 @@
 from sklearn.metrics import f1_score
 
+
 def get_metrics(outputs, labels, top_k=(1, 5)):
     """
     Calcola top-1 accuracy, top-5 accuracy e F1 score.
