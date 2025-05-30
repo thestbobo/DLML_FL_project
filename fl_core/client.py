@@ -20,14 +20,11 @@ def local_train(model, dataloader, epochs, lr, device, warmup_epochs=5):
     w = min(warmup_epochs, total_epochs)
 
     def lr_fn(epoch):
+        if total_epochs <= w:
+            return float(epoch + 1) / float(total_epochs)
         if epoch < w:
-            # linear warm-up: (epoch+1)/w
             return float(epoch + 1) / float(w)
-        else:
-            # cosine annealing over [w, total_epochs)
-            return 0.5 * (1.0 + math.cos(
-                math.pi * (epoch - w) / float(total_epochs - w)
-            ))
+        return 0.5 * (1.0 + math.cos(math.pi * (epoch - w) / float(total_epochs - w)))
 
     scheduler = LambdaLR(optimizer, lr_fn)
 
@@ -86,12 +83,11 @@ def local_train_talos(
     w = min(warmup_epochs, total_epochs)
 
     def lr_fn(epoch):
+        if total_epochs <= w:
+            return float(epoch + 1) / float(total_epochs)
         if epoch < w:
             return float(epoch + 1) / float(w)
-        else:
-            return 0.5 * (1.0 + math.cos(
-                math.pi * (epoch - w) / float(total_epochs - w)
-            ))
+        return 0.5 * (1.0 + math.cos(math.pi * (epoch - w) / float(total_epochs - w)))
 
     scheduler = LambdaLR(optimizer, lr_fn)
 
