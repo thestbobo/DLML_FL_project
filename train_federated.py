@@ -149,7 +149,6 @@ def main():
                     masks_dir=config.MASKS_DIR,
                     client_id=cid,
                 )
-                avg_loss, acc = 0.0, 0.0            # ???
             else:
                 raise ValueError(f"Unknown FINETUNE_METHOD '{method}'")
 
