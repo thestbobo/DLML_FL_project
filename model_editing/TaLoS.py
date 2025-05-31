@@ -32,21 +32,44 @@ def calibrate_mask(fisher_scores, target_sparsity, rounds):
     """
     Calibrate binary masks based on Fisher scores to reach target sparsity.
     The masks are iteratively refined to ensure that the target sparsity is achieved.
+    Guards against keep_n out of range.
     """
-    masks = {n: torch.ones_like(s) for n, s in fisher_scores.items()}
+    # Initialize masks to all ones
+    masks = {name: torch.ones_like(scores) for name, scores in fisher_scores.items()}
     total = sum(m.numel() for m in masks.values())
-    for r in range(1, rounds+1):
+
+    for r in range(1, rounds + 1):
         # compute round-r sparsity
-        keep_frac = (1 - target_sparsity) ** (r/rounds)
+        keep_frac = (1 - target_sparsity) ** (r / rounds)
         keep_n = int(total * keep_frac)
 
-        # extract tau via top-keep_n
-        all_scores = torch.cat([
-            fisher_scores[n][masks[n].bool()].flatten() for n in masks
-        ])
+        # gather scores currently unmasked
+        available_scores = []
+        for n in masks:
+            # only include scores where mask is 1
+            available_scores.append(fisher_scores[n][masks[n].bool()].flatten())
+        if available_scores:
+            all_scores = torch.cat(available_scores)
+        else:
+            # no parameters left to keep
+            for n in masks:
+                masks[n] = torch.zeros_like(masks[n])
+            break
+
+        num_avail = all_scores.numel()
+        # guard against keep_n out of range
+        if keep_n <= 0:
+            for n in masks:
+                masks[n] = torch.zeros_like(masks[n])
+            break
+        if keep_n >= num_avail:
+            # nothing to prune this round, skip to next iteration
+            continue
+
+        # compute threshold tau from top-keep_n scores
         tau = torch.topk(all_scores, keep_n, largest=True).values.min()
 
-        # rebuild mask at this round
+        # rebuild mask at this round: keep scores <= tau (prune high scores first)
         for n in masks:
             masks[n] = (fisher_scores[n] <= tau).float()
 
