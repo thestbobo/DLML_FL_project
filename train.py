@@ -168,8 +168,6 @@ def main():
             model=None
         )
 
-
-
     elif config.finetuning_method == "dense":
         torch.cuda.empty_cache()
         optimizer = torch.optim.SGD(
