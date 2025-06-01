@@ -51,15 +51,14 @@ def main():
     # load config
     with open("config/config.yaml") as f:
         default_config = yaml.safe_load(f)
-
     wandb.init(project="Federated-DINO-ViT", config=default_config)
     config = wandb.config
 
     # seeds
     np.random.seed(config.seed)
     torch.manual_seed(config.seed)
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     print("Using device: ", device)
     mode = "IID" if config.IID else f"Non-IID Nc={config.NC}"
     print(f"========== Federated Training Start ({mode}) ==========")
@@ -68,6 +67,7 @@ def main():
     starting_round = 0
     best_test_accuracy = 0.0
     ckpt_path = config.get("checkpoint_path", "")
+
     global_model = DINO_ViT(num_classes=100, pretrained=True)
 
     if ckpt_path and os.path.exists(ckpt_path):
@@ -108,16 +108,29 @@ def main():
         local_weights, num_samples_list = [], []
         client_to_log = np.random.choice(selected_clients)   # logging local metrics for one random active client
 
+        # compute per round LR decay
         lr_round = base_lr * (decay ** (t_round - 1))
 
         for cid in selected_clients:
             # local_model = DINO_ViT(num_classes=100, pretrained=False)
             # local_model.load_state_dict(global_weights)
             print(f"Training client -> {cid}")
+            # DEBUG
+            cnt = 0
+            for _ in DataLoader(client_datasets[cid], batch_size=1):
+                cnt += 1
+            print(f"  Client {cid} dataset size: {cnt}")
+
             local_model = copy.deepcopy(global_model)
 
-            loader = DataLoader(client_datasets[cid], batch_size=config.BATCH_SIZE, shuffle=True, num_workers=2,
+            loader = DataLoader(client_datasets[cid],
+                                batch_size=config.BATCH_SIZE,
+                                shuffle=True,
+                                num_workers=2,
                                 pin_memory=True)
+
+            # DEBUG
+            initial_weights = copy.deepcopy(local_model.state_dict())
 
             method = config.FINETUNE_METHOD.lower()
 
@@ -128,27 +141,58 @@ def main():
                                                lr=lr_round,
                                                device=device,
                                                warmup_epochs=warmup_eps)
+                sparsity = None
+                masks = None
+
             elif method == "talos":
-                w = local_train_talos(local_model,
-                                      loader,
-                                      epochs=config.LOCAL_EPOCHS,
-                                      lr=lr_round,
-                                      device=device,
-                                      warmup_epochs=warmup_eps,
-                                      target_sparsity=config.TALOS_TARGET_SPARSITY,
-                                      prune_rounds=config.TALOS_PRUNE_ROUNDS,
-                                      fisher_loader=None)
-                avg_loss, acc = 0.0, 0.0
+                w, avg_loss, acc, sparsity, masks = local_train_talos(
+                    local_model,
+                    loader,
+                    epochs=config.LOCAL_EPOCHS,
+                    lr=lr_round,
+                    device=device,
+                    target_sparsity=config.TALOS_TARGET_SPARSITY,
+                    prune_rounds=config.TALOS_PRUNE_ROUNDS,
+                    fisher_loader=None,
+                    warmup_epochs=warmup_eps,
+                    masks_dir=config.MASKS_DIR,
+                    client_id=cid,
+                )
             else:
                 raise ValueError(f"Unknown FINETUNE_METHOD '{method}'")
+
+            # DEBUG: Compare initial vs final weights
+            diff_norm = 0.0
+            for name in initial_weights:
+                p0 = initial_weights[name].cpu()
+                p1 = w[name].cpu()
+                diff_norm += (p0 - p1).norm().item() ** 2
+            diff_norm = diff_norm ** 0.5
+            print(f"  Client {cid} local weight diff L2: {diff_norm:.6f}")
+            print(f"  Client {cid} local loss={avg_loss:.4f}, acc={acc:.4f}")
+            if sparsity is not None:
+                print(f"  Client {cid} sparsity={100 * sparsity:.2f}%")
 
             local_weights.append(w)
             num_samples_list.append(len(client_datasets[cid]))
 
             # logging single selected client
             if cid == client_to_log:
-                sample_batch = next(iter(loader))
                 log_client_metrics(cid, avg_loss, acc, t_round)
+                if sparsity is not None:
+                    # log global sparsity
+                    wandb.log({
+                        "round": t_round,
+                        f"client_{cid}/sparsity": sparsity
+                    })
+                    # log layer-wise density histogram
+                    layer_densities = [
+                        masks[name].sum().item() / masks[name].numel() for name in masks
+                    ]
+                    wandb.log({
+                        "round": t_round,
+                        f"client_{cid}/layer_density": wandb.Histogram(layer_densities)
+                    })
 
         # aggregate ang log global metrics
         global_weights = average_weights_fedavg(local_weights, num_samples_list)

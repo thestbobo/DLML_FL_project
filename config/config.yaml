@@ -46,7 +46,7 @@ lora_target_modules:
 # --------------------------
 NUM_CLIENTS: 100
 CLIENT_FRACTION: 0.1  # 10% of clients selected each round
-LOCAL_EPOCHS: 3
+LOCAL_EPOCHS: 5
 BATCH_SIZE: 64
 LR: 0.001
 LR_DECAY: 0.99        # per-round global lr decay factor
@@ -54,12 +54,12 @@ WARMUP_EPOCHS: 5      # local warm-up scheduler
 ROUNDS: 100
 IID: True  # Set to False for non-iid
 NC: 2  # Number of classes per client in non-iid setting
-CHECKPOINT_PATH: '' # "/content/drive/MyDrive/DL_project/federated_checkpoints/.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
+CHECKPOINT_PATH: '/content/drive/MyDrive/DL_project/federated_checkpoints/fl_model_round_25.pth' # "/content/drive/MyDrive/DL_project/federated_checkpoints/.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 OUT_CHECKPOINT_PATH: "/content/drive/MyDrive/DL_project/federated_checkpoints"
-FINETUNE_METHOD: 'dense'           # or "dense"
+FINETUNE_METHOD: 'talos'           # or "dense"
 
 # talos fine-tuning (federated)
-TALOS_TARGET_SPARSITY: 0.2       # e.g. keep 80% of params
+TALOS_TARGET_SPARSITY: 0.15       # e.g. keep 80% of params
 TALOS_PRUNE_ROUNDS: 3            # how many mask‐calibration iterations
 CALIBRATION_SPLIT: 0.1                 # fraction for Fisher‐calibration (already in place)
 
