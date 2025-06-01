@@ -1,4 +1,4 @@
-name: sweep-29-05-2025
+name: sweep-02-06-2025-dense
 method: bayes  # 'random' or 'grid' are alternatives
 metric:
   name: val_top_1_accuracy
