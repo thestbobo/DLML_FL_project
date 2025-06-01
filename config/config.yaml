@@ -46,7 +46,7 @@ lora_target_modules:
 # --------------------------
 NUM_CLIENTS: 100
 CLIENT_FRACTION: 0.1  # 10% of clients selected each round
-LOCAL_EPOCHS: 3
+LOCAL_EPOCHS: 5
 BATCH_SIZE: 64
 LR: 0.001
 LR_DECAY: 0.99        # per-round global lr decay factor
@@ -59,7 +59,7 @@ OUT_CHECKPOINT_PATH: "/content/drive/MyDrive/DL_project/federated_checkpoints"
 FINETUNE_METHOD: 'talos'           # or "dense"
 
 # talos fine-tuning (federated)
-TALOS_TARGET_SPARSITY: 0.2       # e.g. keep 80% of params
+TALOS_TARGET_SPARSITY: 0.15       # e.g. keep 80% of params
 TALOS_PRUNE_ROUNDS: 3            # how many mask‐calibration iterations
 CALIBRATION_SPLIT: 0.1                 # fraction for Fisher‐calibration (already in place)
 
