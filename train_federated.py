@@ -115,6 +115,12 @@ def main():
             # local_model = DINO_ViT(num_classes=100, pretrained=False)
             # local_model.load_state_dict(global_weights)
             print(f"Training client -> {cid}")
+            # DEBUG
+            cnt = 0
+            for _ in DataLoader(client_datasets[cid], batch_size=1):
+                cnt += 1
+            print(f"  Client {cid} dataset size: {cnt}")
+
             local_model = copy.deepcopy(global_model)
 
             loader = DataLoader(client_datasets[cid],
@@ -122,6 +128,9 @@ def main():
                                 shuffle=True,
                                 num_workers=2,
                                 pin_memory=True)
+
+            # DEBUG
+            initial_weights = copy.deepcopy(local_model.state_dict())
 
             method = config.FINETUNE_METHOD.lower()
 
@@ -151,6 +160,18 @@ def main():
                 )
             else:
                 raise ValueError(f"Unknown FINETUNE_METHOD '{method}'")
+
+            # DEBUG: Compare initial vs final weights
+            diff_norm = 0.0
+            for name in initial_weights:
+                p0 = initial_weights[name].cpu()
+                p1 = w[name].cpu()
+                diff_norm += (p0 - p1).norm().item() ** 2
+            diff_norm = diff_norm ** 0.5
+            print(f"  Client {cid} local weight diff L2: {diff_norm:.6f}")
+            print(f"  Client {cid} local loss={avg_loss:.4f}, acc={acc:.4f}")
+            if sparsity is not None:
+                print(f"  Client {cid} sparsity={100 * sparsity:.2f}%")
 
             local_weights.append(w)
             num_samples_list.append(len(client_datasets[cid]))
