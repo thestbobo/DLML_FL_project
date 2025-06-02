@@ -1,12 +1,19 @@
 import torch
 
 
-def compute_fisher_scores(model, dataloader, criterion, device):
+def compute_fisher_scores(model,
+                          dataloader,
+                          criterion,
+                          device: torch.device) -> dict:
     """
     Compute Fisher Information matrix diagonal elements (sensitivity scores).
     """
     model.eval()
-    fisher_scores = {name: torch.zeros_like(param) for name, param in model.named_parameters() if param.requires_grad}
+    fisher_scores = {
+        name: torch.zeros_like(param)
+        for name, param in model.named_parameters()
+        if param.requires_grad
+    }
 
     for inputs, labels in dataloader:
         inputs, labels = inputs.to(device), labels.to(device)
@@ -17,69 +24,50 @@ def compute_fisher_scores(model, dataloader, criterion, device):
         loss.backward()
 
         for name, param in model.named_parameters():
-            if param.requires_grad:
-                fisher_scores[name] += param.grad ** 2
+            if param.requires_grad and param.grad is not None:
+                fisher_scores[name] += param.grad.pow(2)
 
-    # Normalize scores
-    for name in fisher_scores:
-        fisher_scores[name] /= len(dataloader)
+    num_batches = len(dataloader)
+    if num_batches > 0:
+        for name in fisher_scores:
+            fisher_scores[name] /= float(num_batches)
 
     return fisher_scores
 
 
 # iterative pruning, moving threshold (tau) updated each calibration rounds
-def calibrate_mask(fisher_scores,
+def calibrate_mask(fisher_scores: dict,
                    target_sparsity: float,
-                   rounds: int):
+                   rounds: int) -> dict:
     """
     Iterative pruning: at each of `rounds` iterations, prune `target_sparsity`
-    fraction of the remaining parameters (by Fisher score).
-
-    Args:
-        fisher_scores: dict mapping param name -> same-shape score tensor.
-        target_sparsity: fraction of parameters to prune each round (0.0–1.0).
-        rounds: number of iterative pruning rounds.
-
-    Returns:
-        masks: dict mapping param name -> binary mask (1=keep, 0=prune).
+    fraction of the *remaining* parameters (by Fisher score).
     """
-    # Initialize all‐ones mask
     masks = {name: torch.ones_like(scores) for name, scores in fisher_scores.items()}
 
-    for r in range(rounds):
-        # Gather all unpruned scores
+    for _ in range(rounds):
         available_scores = []
         for name, scores in fisher_scores.items():
             mask_bool = masks[name].bool()
             if mask_bool.any():
                 available_scores.append(scores[mask_bool].flatten())
         if not available_scores:
-            break  # nothing left to prune
+            break
 
         all_scores = torch.cat(available_scores)
         num_avail = all_scores.numel()
-
-        # Compute how many to keep this round: (1 - target_sparsity) fraction of remaining
         keep_n = int((1.0 - target_sparsity) * num_avail)
 
-        # Guard against out-of-range
         if keep_n <= 0:
-            # prune everything
             for name in masks:
                 masks[name] = torch.zeros_like(masks[name])
             break
         if keep_n >= num_avail:
-            # keep everything (no pruning this iteration)
             continue
 
-        # Find threshold among top‐keep_n
         tau = torch.topk(all_scores, keep_n, largest=True).values.min()
-
-        # Update each mask: keep = (current_mask == 1) AND (score <= tau)
         for name, scores in fisher_scores.items():
             current_mask = masks[name]
-            mask_bool = current_mask.bool()
-            # Only consider scores that are currently unpruned
             new_mask = (scores <= tau).float()
             masks[name] = current_mask * new_mask
 

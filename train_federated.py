@@ -5,6 +5,8 @@ import torch
 import yaml
 import wandb
 from torch.utils.data import DataLoader
+
+from model_editing.TaLoS import compute_fisher_scores, calibrate_mask
 from models.dino_ViT_b16 import DINO_ViT
 from fl_core.client import local_train, local_train_talos
 from fl_core.server import average_weights_fedavg
@@ -86,7 +88,47 @@ def main():
     client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.seed)
     test_loader = get_test_loader(batch_size=config.BATCH_SIZE)
 
-        # global_weights = global_model.state_dict()
+    #    -------- MOVE THIS CODE IN TaLoS / FL  dedicated scripts --------
+
+    #    Compute & save a single "global" mask ONCE (before any client sees it)
+    #    We call local_train_talos but only use its mask-calculation logic once.
+    print("\n>>> Computing global Fisher mask (one-time for this run) …")
+    #    We need a "representative" loader for Fisher:
+    #    If IID, we can just concatenate a small subset from each client or use round-1 selected clients.
+    #    Here, for simplicity, we'll use the first client’s full dataloader as a proxy.
+    #    (In practice, you might want to sample some data from many clients.)
+    example_cid = 0 if len(client_datasets) > 0 else None
+    if example_cid is None:
+        raise RuntimeError("No clients available to compute Fisher.")
+    proxy_loader = DataLoader(client_datasets[example_cid],
+                              batch_size=config.BATCH_SIZE,
+                              shuffle=True,
+                              num_workers=2,
+                              pin_memory=True)
+
+    #    We call calibrate_mask explicitly instead of spinning up the full talos routine,
+    #    but easiest is to leverage local_train_talos up through mask creation.
+    #    So we'll instantiate a dummy model copy, compute Fishers+mask, then discard the rest.
+    dummy_model = copy.deepcopy(global_model).to(device)
+    dummy_criterion = torch.nn.CrossEntropyLoss()
+
+    # --- Compute Fisher scores once and create a mask_global.pt  ---
+    # Check if mask already exists (it won't, since we cleared it)
+    global_mask_path = os.path.join(config.MASKS_DIR, "mask_global.pt")
+    if os.path.exists(global_mask_path):
+        global_masks = torch.load(global_mask_path, map_location=device)
+    else:
+        # 1) Compute Fisher scores on dummy_model
+        fisher_scores = compute_fisher_scores(dummy_model, proxy_loader, dummy_criterion, device)
+        # 2) Calibrate mask
+        global_masks = calibrate_mask(fisher_scores,
+                                      config.TALOS_TARGET_SPARSITY,
+                                      config.TALOS_PRUNE_ROUNDS)
+        # 3) Save the global mask
+        torch.save(global_masks, global_mask_path)
+    print(">>> Global mask computed and saved.")
+
+    # ------------------ MOVE --------------------
 
     # get LR info for scheduler configuration
     base_lr = config.LR
@@ -112,8 +154,6 @@ def main():
         lr_round = base_lr * (decay ** (t_round - 1))
 
         for cid in selected_clients:
-            # local_model = DINO_ViT(num_classes=100, pretrained=False)
-            # local_model.load_state_dict(global_weights)
             print(f"Training client -> {cid}")
             # DEBUG
             cnt = 0
@@ -145,6 +185,8 @@ def main():
                 masks = None
 
             elif method == "talos":
+                # ─── Use the PRECOMPUTED global mask (same for every client) ───
+                # We pass `global_masks` and skip any recalculation inside local_train_talos.
                 w, avg_loss, acc, sparsity, masks = local_train_talos(
                     local_model,
                     loader,
@@ -155,8 +197,8 @@ def main():
                     prune_rounds=config.TALOS_PRUNE_ROUNDS,
                     fisher_loader=None,
                     warmup_epochs=warmup_eps,
-                    masks_dir=config.MASKS_DIR,
-                    client_id=cid,
+                    masks_dir=config.MASKS_DIR,  # client_id is unused when loading global mask
+                    global_masks=global_masks  # pass the one global mask
                 )
             else:
                 raise ValueError(f"Unknown FINETUNE_METHOD '{method}'")
