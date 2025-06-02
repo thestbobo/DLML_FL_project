@@ -29,62 +29,59 @@ def compute_fisher_scores(model, dataloader, criterion, device):
 
 # iterative pruning, moving threshold (tau) updated each calibration rounds
 def calibrate_mask(fisher_scores,
-                   target_sparsity,
-                   rounds):
+                   target_sparsity: float,
+                   rounds: int):
     """
-    Calibrate binary masks based on Fisher scores to reach target sparsity.
-    The masks are iteratively refined to ensure that the target sparsity is achieved.
-    Guards against keep_n out of range.
+    Iterative pruning: at each of `rounds` iterations, prune `target_sparsity`
+    fraction of the remaining parameters (by Fisher score).
 
     Args:
-        fisher_scores: dict mapping parameter name -> same-shape score tensor.
-        target_sparsity: fraction of parameters to prune (0.0 to 1.0).
-        rounds: number of calibration iterations.
+        fisher_scores: dict mapping param name -> same-shape score tensor.
+        target_sparsity: fraction of parameters to prune each round (0.0–1.0).
+        rounds: number of iterative pruning rounds.
 
     Returns:
-        masks: dict mapping parameter name -> binary mask (same device/shape).
+        masks: dict mapping param name -> binary mask (1=keep, 0=prune).
     """
-    # Initialize all masks to ones (keep everything initially)
+    # 1) Initialize all‐ones mask
     masks = {name: torch.ones_like(scores) for name, scores in fisher_scores.items()}
-    total = sum(m.numel() for m in masks.values())
 
-    for r in range(1, rounds + 1):
-        # Compute how many parameters to keep this round
-        keep_frac = (1.0 - target_sparsity) ** (r / rounds)
-        keep_n = int(total * keep_frac)
-
-        # Collect scores of parameters still marked as '1' in mask
+    for r in range(rounds):
+        # 2) Gather all unpruned scores
         available_scores = []
-        for name in masks:
+        for name, scores in fisher_scores.items():
             mask_bool = masks[name].bool()
             if mask_bool.any():
-                available_scores.append(fisher_scores[name][mask_bool].flatten())
-        if available_scores:
-            all_scores = torch.cat(available_scores)
-        else:
-            # No parameters left to keep
-            for name in masks:
-                masks[name] = torch.zeros_like(masks[name])
-            break
+                available_scores.append(scores[mask_bool].flatten())
+        if not available_scores:
+            break  # nothing left to prune
 
+        all_scores = torch.cat(available_scores)
         num_avail = all_scores.numel()
 
-        # Guard against out-of-range keep_n
+        # 3) Compute how many to keep this round: (1 - target_sparsity) fraction of remaining
+        keep_n = int((1.0 - target_sparsity) * num_avail)
+
+        # 4) Guard against out-of-range
         if keep_n <= 0:
-            # Prune everything
+            # prune everything
             for name in masks:
                 masks[name] = torch.zeros_like(masks[name])
             break
         if keep_n >= num_avail:
-            # Keep everything this round (no change)
+            # keep everything (no pruning this iteration)
             continue
 
-        # Find threshold tau: the smallest score among the top-keep_n values
+        # 5) Find threshold among top‐keep_n
         tau = torch.topk(all_scores, keep_n, largest=True).values.min()
 
-        # Rebuild mask: keep only scores <= tau (prune high-score params)
-        for name in masks:
-            masks[name] = (fisher_scores[name] <= tau).float()
+        # 6) Update each mask: keep = (current_mask == 1) AND (score <= tau)
+        for name, scores in fisher_scores.items():
+            current_mask = masks[name]
+            mask_bool = current_mask.bool()
+            # Only consider scores that are currently unpruned
+            new_mask = (scores <= tau).float()
+            masks[name] = current_mask * new_mask
 
     return masks
 
