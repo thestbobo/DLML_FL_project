@@ -43,11 +43,11 @@ def calibrate_mask(fisher_scores,
     Returns:
         masks: dict mapping param name -> binary mask (1=keep, 0=prune).
     """
-    # 1) Initialize all‐ones mask
+    # Initialize all‐ones mask
     masks = {name: torch.ones_like(scores) for name, scores in fisher_scores.items()}
 
     for r in range(rounds):
-        # 2) Gather all unpruned scores
+        # Gather all unpruned scores
         available_scores = []
         for name, scores in fisher_scores.items():
             mask_bool = masks[name].bool()
@@ -59,10 +59,10 @@ def calibrate_mask(fisher_scores,
         all_scores = torch.cat(available_scores)
         num_avail = all_scores.numel()
 
-        # 3) Compute how many to keep this round: (1 - target_sparsity) fraction of remaining
+        # Compute how many to keep this round: (1 - target_sparsity) fraction of remaining
         keep_n = int((1.0 - target_sparsity) * num_avail)
 
-        # 4) Guard against out-of-range
+        # Guard against out-of-range
         if keep_n <= 0:
             # prune everything
             for name in masks:
@@ -72,10 +72,10 @@ def calibrate_mask(fisher_scores,
             # keep everything (no pruning this iteration)
             continue
 
-        # 5) Find threshold among top‐keep_n
+        # Find threshold among top‐keep_n
         tau = torch.topk(all_scores, keep_n, largest=True).values.min()
 
-        # 6) Update each mask: keep = (current_mask == 1) AND (score <= tau)
+        # Update each mask: keep = (current_mask == 1) AND (score <= tau)
         for name, scores in fisher_scores.items():
             current_mask = masks[name]
             mask_bool = current_mask.bool()
