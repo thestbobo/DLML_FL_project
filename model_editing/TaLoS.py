@@ -1,10 +1,7 @@
 import torch
 
 
-def compute_fisher_scores(model,
-                          dataloader,
-                          criterion,
-                          device: torch.device) -> dict:
+def compute_fisher_scores(model, dataloader, criterion, device):
     """
     Compute Fisher Information matrix diagonal elements (sensitivity scores).
     """
@@ -27,49 +24,57 @@ def compute_fisher_scores(model,
             if param.requires_grad and param.grad is not None:
                 fisher_scores[name] += param.grad.pow(2)
 
-    num_batches = len(dataloader)
-    if num_batches > 0:
+    n_batches = len(dataloader)
+    if n_batches > 0:
         for name in fisher_scores:
-            fisher_scores[name] /= float(num_batches)
+            fisher_scores[name] /= float(n_batches)
 
     return fisher_scores
 
 
 # iterative pruning, moving threshold (tau) updated each calibration rounds
-def calibrate_mask(fisher_scores: dict,
-                   target_sparsity: float,
-                   rounds: int) -> dict:
+def calibrate_mask(fisher_scores, target_sparsity, rounds):
     """
-    Iterative pruning: at each of `rounds` iterations, prune `target_sparsity`
-    fraction of the *remaining* parameters (by Fisher score).
+    Calibrate binary masks based on Fisher scores to reach target sparsity.
+    The masks are iteratively refined to ensure that the target sparsity is achieved.
     """
-    masks = {name: torch.ones_like(scores) for name, scores in fisher_scores.items()}
+    masks = {n: torch.ones_like(s) for n, s in fisher_scores.items()}
+    total = sum(m.numel() for m in masks.values())
 
-    for _ in range(rounds):
+    for r in range(1, rounds + 1):
+        keep_frac = (1 - target_sparsity) ** (r / rounds)
+        keep_n = int(total * keep_frac)
+
+        # Gather all currently‐alive scores
         available_scores = []
-        for name, scores in fisher_scores.items():
-            mask_bool = masks[name].bool()
+        for n in masks:
+            tensor = fisher_scores[n]
+            mask_bool = masks[n].bool()
             if mask_bool.any():
-                available_scores.append(scores[mask_bool].flatten())
+                available_scores.append(tensor[mask_bool].reshape(-1))
         if not available_scores:
+            # nothing left
+            for n in masks:
+                masks[n] = torch.zeros_like(masks[n])
             break
 
         all_scores = torch.cat(available_scores)
         num_avail = all_scores.numel()
-        keep_n = int((1.0 - target_sparsity) * num_avail)
 
+        # Guard against out-of‐range
         if keep_n <= 0:
-            for name in masks:
-                masks[name] = torch.zeros_like(masks[name])
+            for n in masks:
+                masks[n] = torch.zeros_like(masks[n])
             break
         if keep_n >= num_avail:
+            # keep everything currently alive; skip pruning step
             continue
 
         tau = torch.topk(all_scores, keep_n, largest=True).values.min()
-        for name, scores in fisher_scores.items():
-            current_mask = masks[name]
-            new_mask = (scores <= tau).float()
-            masks[name] = current_mask * new_mask
+
+        # Rebuild mask from scratch (keep bottom keep_n out of all original)
+        for n in masks:
+            masks[n] = (fisher_scores[n] <= tau).float()
 
     return masks
 

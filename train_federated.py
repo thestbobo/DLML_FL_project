@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import yaml
 import wandb
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset, Subset
 
 from model_editing.TaLoS import compute_fisher_scores, calibrate_mask
 from models.dino_ViT_b16 import DINO_ViT
@@ -53,6 +53,7 @@ def main():
     # load config
     with open("config/config.yaml") as f:
         default_config = yaml.safe_load(f)
+
     wandb.init(project="Federated-DINO-ViT", config=default_config)
     config = wandb.config
 
@@ -60,8 +61,26 @@ def main():
     np.random.seed(config.seed)
     torch.manual_seed(config.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
     print("Using device: ", device)
+
+    # check for cached mask
+    if config.MASKS_DIR:
+        # User has provided a path → we trust it contains mask_global.pt
+        masks_root = config.MASKS_DIR
+        os.makedirs(masks_root, exist_ok=True)
+        print(f">>> Loading precomputed mask from: {masks_root}")
+        need_to_compute_mask = False
+    else:
+        # No path given → compute a new mask this run and save under ./masks_run
+        masks_root = "./masks_run"
+        os.makedirs(masks_root, exist_ok=True)
+        print(f">>> No MASKS_DIR set; will compute new mask and store under: {masks_root}")
+        need_to_compute_mask = True
+
+        # Filenames for the shared Fisher scores and mask
+    global_fisher_file = os.path.join(masks_root, "fisher_global.pt")
+    global_mask_file = os.path.join(masks_root, "mask_global.pt")
+
     mode = "IID" if config.IID else f"Non-IID Nc={config.NC}"
     print(f"========== Federated Training Start ({mode}) ==========")
 
@@ -88,47 +107,49 @@ def main():
     client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.seed)
     test_loader = get_test_loader(batch_size=config.BATCH_SIZE)
 
-    #    -------- MOVE THIS CODE IN TaLoS / FL  dedicated scripts --------
+    if need_to_compute_mask:
+        num_calib_clients = min(5, config.NUM_CLIENTS)
+        per_client_calib_count = int(len(client_datasets[0]) * config.CALIBRATION_SPLIT)
 
-    #    Compute & save a single "global" mask ONCE (before any client sees it)
-    #    We call local_train_talos but only use its mask-calculation logic once.
-    print("\n>>> Computing global Fisher mask (one-time for this run) …")
-    #    We need a "representative" loader for Fisher:
-    #    If IID, we can just concatenate a small subset from each client or use round-1 selected clients.
-    #    Here, for simplicity, we'll use the first client’s full dataloader as a proxy.
-    #    (In practice, you might want to sample some data from many clients.)
-    example_cid = 0 if len(client_datasets) > 0 else None
-    if example_cid is None:
-        raise RuntimeError("No clients available to compute Fisher.")
-    proxy_loader = DataLoader(client_datasets[example_cid],
-                              batch_size=config.BATCH_SIZE,
-                              shuffle=True,
-                              num_workers=2,
-                              pin_memory=True)
+        subsets = []
+        for cid in range(num_calib_clients):
+            full_dataset = client_datasets[cid]
+            indices = list(range(per_client_calib_count))
+            subsets.append(Subset(full_dataset, indices))
 
-    #    We call calibrate_mask explicitly instead of spinning up the full talos routine,
-    #    but easiest is to leverage local_train_talos up through mask creation.
-    #    So we'll instantiate a dummy model copy, compute Fishers+mask, then discard the rest.
-    dummy_model = copy.deepcopy(global_model).to(device)
-    dummy_criterion = torch.nn.CrossEntropyLoss()
-
-    # --- Compute Fisher scores once and create a mask_global.pt  ---
-    # Check if mask already exists (it won't, since we cleared it)
-    global_mask_path = os.path.join(config.MASKS_DIR, "mask_global.pt")
-    if os.path.exists(global_mask_path):
-        global_masks = torch.load(global_mask_path, map_location=device)
+        calibration_dataset = ConcatDataset(subsets)
+        calib_loader = DataLoader(
+            calibration_dataset,
+            batch_size=config.BATCH_SIZE,
+            shuffle=True,
+            num_workers=2,
+            pin_memory=True,
+        )
     else:
-        # 1) Compute Fisher scores on dummy_model
-        fisher_scores = compute_fisher_scores(dummy_model, proxy_loader, dummy_criterion, device)
-        # 2) Calibrate mask
-        global_masks = calibrate_mask(fisher_scores,
-                                      config.TALOS_TARGET_SPARSITY,
-                                      config.TALOS_PRUNE_ROUNDS)
-        # 3) Save the global mask
-        torch.save(global_masks, global_mask_path)
-    print(">>> Global mask computed and saved.")
+        calib_loader = None
 
-    # ------------------ MOVE --------------------
+    print("\n>>> Preparing shared Fisher+mask ...")
+    if need_to_compute_mask:
+        # 7.1) Compute Fisher scores once on calib_loader
+        dummy = copy.deepcopy(global_model).to(device)
+        dummy_criterion = torch.nn.CrossEntropyLoss()
+        fisher_scores = compute_fisher_scores(dummy, calib_loader, dummy_criterion, device)
+        torch.save(fisher_scores, global_fisher_file)
+        del dummy  # free GPU
+
+        # 7.2) One-shot prune of `target_sparsity` fraction of ALL weights
+        shared_masks = calibrate_mask(
+            fisher_scores,
+            target_sparsity=config.TALOS_TARGET_SPARSITY,
+            rounds=1
+        )
+        torch.save(shared_masks, global_mask_file)
+    else:
+        # Load from existing folder
+        fisher_scores = torch.load(global_fisher_file, map_location=device)
+        shared_masks = torch.load(global_mask_file, map_location=device)
+
+    print(">>> Shared mask ready (loaded from or saved to) →", masks_root)
 
     # get LR info for scheduler configuration
     base_lr = config.LR
@@ -171,7 +192,6 @@ def main():
 
             # DEBUG
             initial_weights = copy.deepcopy(local_model.state_dict())
-
             method = config.FINETUNE_METHOD.lower()
 
             if method == "dense":
@@ -195,10 +215,9 @@ def main():
                     device=device,
                     target_sparsity=config.TALOS_TARGET_SPARSITY,
                     prune_rounds=config.TALOS_PRUNE_ROUNDS,
-                    fisher_loader=None,
                     warmup_epochs=warmup_eps,
                     masks_dir=config.MASKS_DIR,  # client_id is unused when loading global mask
-                    global_masks=global_masks  # pass the one global mask
+                    global_masks=shared_masks  # pass the one global mask
                 )
             else:
                 raise ValueError(f"Unknown FINETUNE_METHOD '{method}'")
