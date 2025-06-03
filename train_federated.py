@@ -20,7 +20,6 @@ from project_utils.federated_metrics import (
     log_client_metrics
 )
 
-
 def evaluate(model, dataloader):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
@@ -48,134 +47,103 @@ def evaluate(model, dataloader):
 
     return metrics
 
-
 def main():
-    # load config
     with open("config/config.yaml") as f:
         default_config = yaml.safe_load(f)
 
     wandb.init(project="Federated-DINO-ViT", config=default_config)
     config = wandb.config
 
-    # seeds
     np.random.seed(config.seed)
     torch.manual_seed(config.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device: ", device)
 
-    # check for cached mask
-    if config.MASKS_DIR:
-        # User has provided a path → we trust it contains mask_global.pt
-        masks_root = config.MASKS_DIR
-        os.makedirs(masks_root, exist_ok=True)
-        print(f">>> Loading precomputed mask from: {masks_root}")
-        need_to_compute_mask = False
-    else:
-        # No path given → compute a new mask this run and save under ./masks_run
-        masks_root = "./masks_run"
-        os.makedirs(masks_root, exist_ok=True)
-        print(f">>> No MASKS_DIR set; will compute new mask and store under: {masks_root}")
-        need_to_compute_mask = True
+    method = config.FINETUNE_METHOD.lower()
 
-        # Filenames for the shared Fisher scores and mask
-    global_fisher_file = os.path.join(masks_root, "fisher_global.pt")
-    global_mask_file = os.path.join(masks_root, "mask_global.pt")
+    # setup mask config
+    if method == "talos":
+        if config.MASKS_DIR:
+            masks_root = config.MASKS_DIR
+            os.makedirs(masks_root, exist_ok=True)
+            print(f">>> Loading precomputed mask from: {masks_root}")
+            need_to_compute_mask = False
+        else:
+            masks_root = "./masks_run"
+            os.makedirs(masks_root, exist_ok=True)
+            print(f">>> No MASKS_DIR set; will compute new mask and store under: {masks_root}")
+            need_to_compute_mask = True
+
+        global_fisher_file = os.path.join(masks_root, "fisher_global.pt")
+        global_mask_file = os.path.join(masks_root, "mask_global.pt")
+    else:
+        masks_root = None
+        need_to_compute_mask = False
 
     mode = "IID" if config.IID else f"Non-IID Nc={config.NC}"
     print(f"========== Federated Training Start ({mode}) ==========")
 
-    # (optional) resume checkpoint
     starting_round = 0
     best_test_accuracy = 0.0
-    ckpt_path = config.CHECKPOINT_PATH  # MAIUSCOLO, esattamente come nel config.yaml
-
-    match = re.search(r"round_(\d+)", ckpt_path)
-    starting_round = int(match.group(1)) if match else 0
+    ckpt_path = config.CHECKPOINT_PATH
 
     global_model = DINO_ViT(num_classes=100, pretrained=True)
-
-    print("[INFO] Loading from checkpoint:", config.CHECKPOINT_PATH)
-    print("[INFO] Exists?", os.path.exists(config.CHECKPOINT_PATH))
-
+    print("[INFO] Loading from checkpoint:", ckpt_path)
+    print("[INFO] Exists?", os.path.exists(ckpt_path))
 
     if ckpt_path and os.path.exists(ckpt_path):
         print(f"[INFO] Loading checkpoint from {ckpt_path} …")
         ckpt = torch.load(ckpt_path, map_location=device)
-    
-        # Caso 1: checkpoint completo
         if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
-            method = ckpt.get("finetuning_method", "").lower()
-            strict = (method != "lora")
+            method_ckpt = ckpt.get("finetuning_method", "").lower()
+            strict = (method_ckpt != "lora")
             global_model.load_state_dict(ckpt["model_state_dict"], strict=strict)
             starting_round = ckpt.get("round", 0)
             best_test_accuracy = ckpt.get("test_metrics", {}).get("top_1_accuracy", 0.0)
             print(f"[INFO] Resumed from round {starting_round} with best top-1 acc = {best_test_accuracy:.2%}")
-    
-        # Caso 2: solo state_dict
         else:
             print("[WARN] Checkpoint is a pure state_dict. Loading weights only.")
             global_model.load_state_dict(ckpt, strict=False)
-        
             match = re.search(r"round_(\d+)", ckpt_path)
             starting_round = int(match.group(1)) if match else 0
-            best_test_accuracy = 0.0
             print(f"[INFO] Resumed with state_dict only — starting from round {starting_round}")
-    
     else:
         print("No valid checkpoint found; starting from scratch.")
-        starting_round = 0
-        best_test_accuracy = 0.0
 
-
-    # prepare data
     client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.seed)
     test_loader = get_test_loader(batch_size=config.BATCH_SIZE)
 
-    if need_to_compute_mask:
-        num_calib_clients = min(5, config.NUM_CLIENTS)
-        per_client_calib_count = int(len(client_datasets[0]) * config.CALIBRATION_SPLIT)
+    if method == "talos":
+        if need_to_compute_mask:
+            num_calib_clients = min(5, config.NUM_CLIENTS)
+            per_client_calib_count = int(len(client_datasets[0]) * config.CALIBRATION_SPLIT)
+            subsets = []
+            for cid in range(num_calib_clients):
+                full_dataset = client_datasets[cid]
+                indices = list(range(per_client_calib_count))
+                subsets.append(Subset(full_dataset, indices))
+            calibration_dataset = ConcatDataset(subsets)
+            calib_loader = DataLoader(calibration_dataset, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
+        else:
+            calib_loader = None
 
-        subsets = []
-        for cid in range(num_calib_clients):
-            full_dataset = client_datasets[cid]
-            indices = list(range(per_client_calib_count))
-            subsets.append(Subset(full_dataset, indices))
-
-        calibration_dataset = ConcatDataset(subsets)
-        calib_loader = DataLoader(
-            calibration_dataset,
-            batch_size=config.BATCH_SIZE,
-            shuffle=True,
-            num_workers=2,
-            pin_memory=True,
-        )
+        print("\n>>> Preparing shared Fisher+mask ...")
+        if need_to_compute_mask:
+            dummy = copy.deepcopy(global_model).to(device)
+            dummy_criterion = torch.nn.CrossEntropyLoss()
+            fisher_scores = compute_fisher_scores(dummy, calib_loader, dummy_criterion, device)
+            torch.save(fisher_scores, global_fisher_file)
+            del dummy
+            shared_masks = calibrate_mask(fisher_scores, target_sparsity=config.TALOS_TARGET_SPARSITY, rounds=1)
+            torch.save(shared_masks, global_mask_file)
+        else:
+            fisher_scores = torch.load(global_fisher_file, map_location=device)
+            shared_masks = torch.load(global_mask_file, map_location=device)
+        print(">>> Shared mask ready (loaded from or saved to) →", masks_root)
     else:
-        calib_loader = None
+        shared_masks = None
+        print("\n>>> Skipping Fisher/mask preparation — dense training.")
 
-    print("\n>>> Preparing shared Fisher+mask ...")
-    if need_to_compute_mask:
-        # 7.1) Compute Fisher scores once on calib_loader
-        dummy = copy.deepcopy(global_model).to(device)
-        dummy_criterion = torch.nn.CrossEntropyLoss()
-        fisher_scores = compute_fisher_scores(dummy, calib_loader, dummy_criterion, device)
-        torch.save(fisher_scores, global_fisher_file)
-        del dummy  # free GPU
-
-        # 7.2) One-shot prune of `target_sparsity` fraction of ALL weights
-        shared_masks = calibrate_mask(
-            fisher_scores,
-            target_sparsity=config.TALOS_TARGET_SPARSITY,
-            rounds=1
-        )
-        torch.save(shared_masks, global_mask_file)
-    else:
-        # Load from existing folder
-        fisher_scores = torch.load(global_fisher_file, map_location=device)
-        shared_masks = torch.load(global_mask_file, map_location=device)
-
-    print(">>> Shared mask ready (loaded from or saved to) →", masks_root)
-
-    # get LR info for scheduler configuration
     base_lr = config.LR
     decay = config.LR_DECAY
     warmup_eps = config.WARMUP_EPOCHS
