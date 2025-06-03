@@ -2,9 +2,6 @@ import torch
 
 
 def compute_fisher_scores(model, dataloader, criterion, device):
-    """
-    Compute Fisher Information matrix diagonal elements (sensitivity scores).
-    """
     model.eval()
     fisher_scores = {
         name: torch.zeros_like(param)
@@ -32,48 +29,49 @@ def compute_fisher_scores(model, dataloader, criterion, device):
     return fisher_scores
 
 
-# iterative pruning, moving threshold (tau) updated each calibration rounds
 def calibrate_mask(fisher_scores, target_sparsity, rounds):
     """
-    Calibrate binary masks ... in multiple 'rounds' to reach target_sparsity.
+    Calibrate binary masks over multiple 'rounds' to reach target_sparsity.
+    At each round r, we keep the top (1 – s)^(r/R) fraction of weights
+    (i.e. highest‐sensitivity), pruning the rest.
     """
     masks = {n: torch.ones_like(s) for n, s in fisher_scores.items()}
     total = sum(m.numel() for m in masks.values())
 
     for r in range(1, rounds + 1):
         keep_frac = (1 - target_sparsity) ** (r / rounds)
-        keep_n = int(total * keep_frac)
+        keep_n    = int(total * keep_frac)
 
         # Gather all currently‐alive scores
         available_scores = []
         for n in masks:
-            tensor = fisher_scores[n]
+            tensor    = fisher_scores[n]
             mask_bool = masks[n].bool()
             if mask_bool.any():
                 available_scores.append(tensor[mask_bool].reshape(-1))
         if not available_scores:
-            # nothing left
+            # Nothing left to keep
             for n in masks:
                 masks[n] = torch.zeros_like(masks[n])
             break
 
         all_scores = torch.cat(available_scores)
-        num_avail = all_scores.numel()
+        num_avail  = all_scores.numel()
 
-        # Safety checks
         if keep_n <= 0:
             for n in masks:
                 masks[n] = torch.zeros_like(masks[n])
             break
         if keep_n >= num_avail:
-            # keep everything currently alive; skip this pruning step
+            # Keep everything currently alive; no pruning this round.
             continue
 
+        # Find the threshold τ = the smallest value among the top‐keep_n scores
         tau = torch.topk(all_scores, keep_n, largest=True).values.min()
 
-        # Rebuild mask from scratch (keep top‐keep_n scores)
+        # ─── KEEP the weights whose fisher_score >= τ (i.e. the top keep_n) ───
         for n in masks:
-            masks[n] = (fisher_scores[n] <= tau).float()
+            masks[n] = (fisher_scores[n] >= tau).float()
 
     return masks
 
