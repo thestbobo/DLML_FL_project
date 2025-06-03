@@ -91,6 +91,10 @@ def main():
 
     global_model = DINO_ViT(num_classes=100, pretrained=True)
 
+    print("[INFO] Loading from checkpoint:", config.CHECKPOINT_PATH)
+    print("[INFO] Exists?", os.path.exists(config.CHECKPOINT_PATH))
+
+
     if ckpt_path and os.path.exists(ckpt_path):
         print(f"Loading checkpoint from {ckpt_path} …")
         ckpt = torch.load(ckpt_path, map_location=device)
