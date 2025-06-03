@@ -5,7 +5,7 @@ import torch
 import yaml
 import wandb
 from torch.utils.data import DataLoader, ConcatDataset, Subset
-
+import re
 from model_editing.TaLoS import compute_fisher_scores, calibrate_mask
 from models.dino_ViT_b16 import DINO_ViT
 from fl_core.client import local_train, local_train_talos
@@ -89,6 +89,9 @@ def main():
     best_test_accuracy = 0.0
     ckpt_path = config.CHECKPOINT_PATH  # MAIUSCOLO, esattamente come nel config.yaml
 
+    match = re.search(r"round_(\d+)", ckpt_path)
+    starting_round = int(match.group(1)) if match else 0
+
     global_model = DINO_ViT(num_classes=100, pretrained=True)
 
     print("[INFO] Loading from checkpoint:", config.CHECKPOINT_PATH)
@@ -112,9 +115,11 @@ def main():
         else:
             print("[WARN] Checkpoint is a pure state_dict. Loading weights only.")
             global_model.load_state_dict(ckpt, strict=False)
-            starting_round = 0
+        
+            match = re.search(r"round_(\d+)", ckpt_path)
+            starting_round = int(match.group(1)) if match else 0
             best_test_accuracy = 0.0
-            print("[INFO] Resumed with state_dict only — round = 0")
+            print(f"[INFO] Resumed with state_dict only — starting from round {starting_round}")
     
     else:
         print("No valid checkpoint found; starting from scratch.")
