@@ -96,16 +96,31 @@ def main():
 
 
     if ckpt_path and os.path.exists(ckpt_path):
-        print(f"Loading checkpoint from {ckpt_path} …")
+        print(f"[INFO] Loading checkpoint from {ckpt_path} …")
         ckpt = torch.load(ckpt_path, map_location=device)
-        method = ckpt.get("finetuning_method", "").lower()
-        strict = (method != "lora")
-        global_model.load_state_dict(ckpt["model_state_dict"], strict=strict)
-        starting_round = ckpt.get("round", 0)
-        best_test_accuracy = ckpt.get("test_metrics", {}).get("top_1_accuracy", 0.0)
-        print(f"Resumed from round {starting_round} with best test@1 = {best_test_accuracy * 100:.2f}%")
+    
+        # Caso 1: checkpoint completo
+        if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
+            method = ckpt.get("finetuning_method", "").lower()
+            strict = (method != "lora")
+            global_model.load_state_dict(ckpt["model_state_dict"], strict=strict)
+            starting_round = ckpt.get("round", 0)
+            best_test_accuracy = ckpt.get("test_metrics", {}).get("top_1_accuracy", 0.0)
+            print(f"[INFO] Resumed from round {starting_round} with best top-1 acc = {best_test_accuracy:.2%}")
+    
+        # Caso 2: solo state_dict
+        else:
+            print("[WARN] Checkpoint is a pure state_dict. Loading weights only.")
+            global_model.load_state_dict(ckpt, strict=False)
+            starting_round = 0
+            best_test_accuracy = 0.0
+            print("[INFO] Resumed with state_dict only — round = 0")
+    
     else:
         print("No valid checkpoint found; starting from scratch.")
+        starting_round = 0
+        best_test_accuracy = 0.0
+
 
     # prepare data
     client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.seed)
