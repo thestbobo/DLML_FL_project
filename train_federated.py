@@ -147,9 +147,9 @@ def main():
             torch.save(fisher_scores, global_fisher_file)
 
             # Calibrate the binary mask over multiple rounds
+            R = config.TALOS_PRUNE_ROUNDS
 
             # ----- other way of computing mask -----
-            # R = config.TALOS_PRUNE_ROUNDS
             # shared_masks = calibrate_mask(
             #     fisher_scores,
             #     target_sparsity=config.TALOS_TARGET_SPARSITY,
@@ -161,7 +161,8 @@ def main():
             shared_masks = calibrate_mask_layerwise_qk(
                 dummy,
                 fisher_scores,
-                keep_ratio_per_block=0.10
+                keep_ratio_per_block=0.10,
+                rounds=R
             )
 
             torch.save(shared_masks, global_mask_file)
