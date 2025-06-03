@@ -16,7 +16,7 @@ weight_decay: 0.00005743
 momentum: 0.96
 t_max: 50
 epochs: 50
-checkpoint_path: '' # "/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
+checkpoint_path: '/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth' # "/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
 
 finetuning_method: "dense"                             # fine-tuning method switch -> "dense" / "lora" / "talos"
@@ -46,13 +46,13 @@ lora_target_modules:
 # --------------------------
 NUM_CLIENTS: 100
 CLIENT_FRACTION: 0.1  # 10% of clients selected each round
-LOCAL_EPOCHS: 5
+LOCAL_EPOCHS: 3
 BATCH_SIZE: 64
 LR: 0.001
 LR_DECAY: 0.99        # per-round global lr decay factor
 WARMUP_EPOCHS: 5      # local warm-up scheduler
 ROUNDS: 100
-IID: True  # Set to False for non-iid
+IID: False  # Set to False for non-iid
 NC: 2  # Number of classes per client in non-iid setting
 CHECKPOINT_PATH: '/content/drive/MyDrive/DL_project/federated_checkpoints/fl_model_round_25.pth' # "/content/drive/MyDrive/DL_project/federated_checkpoints/.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 OUT_CHECKPOINT_PATH: "/content/drive/MyDrive/DL_project/federated_checkpoints"
