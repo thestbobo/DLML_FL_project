@@ -35,8 +35,7 @@ def compute_fisher_scores(model, dataloader, criterion, device):
 # iterative pruning, moving threshold (tau) updated each calibration rounds
 def calibrate_mask(fisher_scores, target_sparsity, rounds):
     """
-    Calibrate binary masks based on Fisher scores to reach target sparsity.
-    The masks are iteratively refined to ensure that the target sparsity is achieved.
+    Calibrate binary masks ... in multiple 'rounds' to reach target_sparsity.
     """
     masks = {n: torch.ones_like(s) for n, s in fisher_scores.items()}
     total = sum(m.numel() for m in masks.values())
@@ -61,18 +60,18 @@ def calibrate_mask(fisher_scores, target_sparsity, rounds):
         all_scores = torch.cat(available_scores)
         num_avail = all_scores.numel()
 
-        # Guard against out-of‐range
+        # Safety checks
         if keep_n <= 0:
             for n in masks:
                 masks[n] = torch.zeros_like(masks[n])
             break
         if keep_n >= num_avail:
-            # keep everything currently alive; skip pruning step
+            # keep everything currently alive; skip this pruning step
             continue
 
         tau = torch.topk(all_scores, keep_n, largest=True).values.min()
 
-        # Rebuild mask from scratch (keep bottom keep_n out of all original)
+        # Rebuild mask from scratch (keep top‐keep_n scores)
         for n in masks:
             masks[n] = (fisher_scores[n] <= tau).float()
 

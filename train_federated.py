@@ -20,11 +20,10 @@ from project_utils.federated_metrics import (
     log_client_metrics
 )
 
+
 def evaluate(model, dataloader):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.eval()
-    model.to(device)
-
+    model.eval().to(device)
     all_outputs, all_labels = [], []
     total_loss = 0.0
     criterion = torch.nn.CrossEntropyLoss()
@@ -47,7 +46,9 @@ def evaluate(model, dataloader):
 
     return metrics
 
+
 def main():
+    # load config / init WandB
     with open("config/config.yaml") as f:
         default_config = yaml.safe_load(f)
 
@@ -61,17 +62,19 @@ def main():
 
     method = config.FINETUNE_METHOD.lower()
 
-    # setup mask config
+    # TaLoS only -> manage mask cache paths
     if method == "talos":
-        if config.MASKS_DIR:
-            masks_root = config.MASKS_DIR
+        if config.LOAD_MASK:
+            # User specified an existing mask folder (or file) to load
+            masks_root = config.LOAD_MASK
             os.makedirs(masks_root, exist_ok=True)
             print(f">>> Loading precomputed mask from: {masks_root}")
             need_to_compute_mask = False
         else:
-            masks_root = "./masks_run"
+            # No pre‐computed mask: we will compute it from scratch & save under ./masks_run
+            masks_root = config.MASKS_DIR
             os.makedirs(masks_root, exist_ok=True)
-            print(f">>> No MASKS_DIR set; will compute new mask and store under: {masks_root}")
+            print(f">>> No LOAD_MASK set; computing new mask and storing under: {masks_root}")
             need_to_compute_mask = True
 
         global_fisher_file = os.path.join(masks_root, "fisher_global.pt")
@@ -79,6 +82,8 @@ def main():
     else:
         masks_root = None
         need_to_compute_mask = False
+        global_fisher_file = None
+        global_mask_file = None
 
     mode = "IID" if config.IID else f"Non-IID Nc={config.NC}"
     print(f"========== Federated Training Start ({mode}) ==========")
@@ -87,6 +92,7 @@ def main():
     best_test_accuracy = 0.0
     ckpt_path = config.CHECKPOINT_PATH
 
+    # building model / loading existing one from config
     global_model = DINO_ViT(num_classes=100, pretrained=True)
     print("[INFO] Loading from checkpoint:", ckpt_path)
     print("[INFO] Exists?", os.path.exists(ckpt_path))
@@ -110,40 +116,59 @@ def main():
     else:
         print("No valid checkpoint found; starting from scratch.")
 
+    # data prep
     client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.seed)
     test_loader = get_test_loader(batch_size=config.BATCH_SIZE)
 
+    # talos branch
     if method == "talos":
         if need_to_compute_mask:
-            num_calib_clients = min(5, config.NUM_CLIENTS)
-            per_client_calib_count = int(len(client_datasets[0]) * config.CALIBRATION_SPLIT)
-            subsets = []
-            for cid in range(num_calib_clients):
-                full_dataset = client_datasets[cid]
-                indices = list(range(per_client_calib_count))
-                subsets.append(Subset(full_dataset, indices))
-            calibration_dataset = ConcatDataset(subsets)
-            calib_loader = DataLoader(calibration_dataset, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=2, pin_memory=True)
+            print("\n>>> Building a calibration loader over the FULL CIFAR-100 training set …")
+            # Instead of sampling a few clients, we simply concatenate all client splits.
+            # This recreates the entire CIFAR-100 training set (assuming get_client_datasets splits it disjointly).
+            full_train_dataset = ConcatDataset(client_datasets)
+            calib_loader = DataLoader(
+                full_train_dataset,
+                batch_size=config.BATCH_SIZE,
+                shuffle=True,
+                num_workers=2,
+                pin_memory=True
+            )
         else:
             calib_loader = None
 
-        print("\n>>> Preparing shared Fisher+mask ...")
+        print("\n>>> Preparing shared Fisher + mask (TaLoS) …")
         if need_to_compute_mask:
+            # 5.1 Compute Fisher scores on the entire dataset
             dummy = copy.deepcopy(global_model).to(device)
             dummy_criterion = torch.nn.CrossEntropyLoss()
+
             fisher_scores = compute_fisher_scores(dummy, calib_loader, dummy_criterion, device)
             torch.save(fisher_scores, global_fisher_file)
-            del dummy
-            shared_masks = calibrate_mask(fisher_scores, target_sparsity=config.TALOS_TARGET_SPARSITY, rounds=1)
+
+            # 5.2 Calibrate the binary mask over multiple rounds
+            R = config.TALOS_PRUNE_ROUNDS
+            shared_masks = calibrate_mask(
+                fisher_scores,
+                target_sparsity=config.TALOS_TARGET_SPARSITY,
+                rounds=R
+            )
             torch.save(shared_masks, global_mask_file)
+            del dummy, fisher_scores
+
         else:
+            # Just load what’s already on disk
             fisher_scores = torch.load(global_fisher_file, map_location=device)
             shared_masks = torch.load(global_mask_file, map_location=device)
-        print(">>> Shared mask ready (loaded from or saved to) →", masks_root)
+
+        print(
+            f">>> Shared mask ready ({'loaded from' if not need_to_compute_mask else 'computed and saved to'}) → {masks_root}")
+
     else:
         shared_masks = None
         print("\n>>> Skipping Fisher/mask preparation — dense training.")
 
+    # lr.
     base_lr = config.LR
     decay = config.LR_DECAY
     warmup_eps = config.WARMUP_EPOCHS
@@ -152,53 +177,53 @@ def main():
     for t_round in range(starting_round + 1, config.ROUNDS + 1):
         print(f"\n--- Round {t_round} ---")
 
+        # 7.1 Select a subset of clients
         m = max(int(config.CLIENT_FRACTION * config.NUM_CLIENTS), 1)
         selected_clients = np.random.choice(config.NUM_CLIENTS, m, replace=False)
 
-        # logging class distribution for all selected clients every k rounds
+        # 7.2 Log aggregated class distribution every 5 rounds
         if t_round % 5 == 0:
             log_aggregated_class_distribution(client_datasets, selected_clients, t_round)
 
         prev_global_weights = global_model.state_dict()
         local_weights, num_samples_list = [], []
-        client_to_log = np.random.choice(selected_clients)   # logging local metrics for one random active client
-
-        # compute per round LR decay
+        client_to_log = np.random.choice(selected_clients)  # pick one client for local‐metrics logging
         lr_round = base_lr * (decay ** (t_round - 1))
 
         for cid in selected_clients:
             print(f"Training client -> {cid}")
-            # DEBUG
-            cnt = 0
-            for _ in DataLoader(client_datasets[cid], batch_size=1):
-                cnt += 1
+
+            # Show dataset size for debugging
+            cnt = sum(1 for _ in DataLoader(client_datasets[cid], batch_size=1))
             print(f"  Client {cid} dataset size: {cnt}")
 
             local_model = copy.deepcopy(global_model)
+            loader = DataLoader(
+                client_datasets[cid],
+                batch_size=config.BATCH_SIZE,
+                shuffle=True,
+                num_workers=2,
+                pin_memory=True
+            )
 
-            loader = DataLoader(client_datasets[cid],
-                                batch_size=config.BATCH_SIZE,
-                                shuffle=True,
-                                num_workers=2,
-                                pin_memory=True)
-
-            # DEBUG
+            # Keep track of initial weights to log weight‐delta (L2)
             initial_weights = copy.deepcopy(local_model.state_dict())
             method = config.FINETUNE_METHOD.lower()
 
             if method == "dense":
-                w, avg_loss, acc = local_train(local_model,
-                                               loader,
-                                               epochs=config.LOCAL_EPOCHS,
-                                               lr=lr_round,
-                                               device=device,
-                                               warmup_epochs=warmup_eps)
+                w, avg_loss, acc = local_train(
+                    local_model,
+                    loader,
+                    epochs=config.LOCAL_EPOCHS,
+                    lr=lr_round,
+                    device=device,
+                    warmup_epochs=warmup_eps
+                )
                 sparsity = None
                 masks = None
 
             elif method == "talos":
-                # ─── Use the PRECOMPUTED global mask (same for every client) ───
-                # We pass `global_masks` and skip any recalculation inside local_train_talos.
+                # ─── Always use the SINGLE precomputed global mask ───
                 w, avg_loss, acc, sparsity, masks = local_train_talos(
                     local_model,
                     loader,
@@ -207,14 +232,14 @@ def main():
                     device=device,
                     target_sparsity=config.TALOS_TARGET_SPARSITY,
                     prune_rounds=config.TALOS_PRUNE_ROUNDS,
-                    warmup_epochs=warmup_eps,
-                    masks_dir=config.MASKS_DIR,  # client_id is unused when loading global mask
-                    global_masks=shared_masks  # pass the one global mask
+                    masks_dir=masks_root,  # pass the same root where we saved global_mask
+                    global_masks=shared_masks,  # force‐use the precomputed global mask
+                    warmup_epochs=warmup_eps
                 )
             else:
                 raise ValueError(f"Unknown FINETUNE_METHOD '{method}'")
 
-            # DEBUG: Compare initial vs final weights
+            # Compute the L2‐norm of weight update (for logging)
             diff_norm = 0.0
             for name in initial_weights:
                 p0 = initial_weights[name].cpu()
@@ -229,18 +254,18 @@ def main():
             local_weights.append(w)
             num_samples_list.append(len(client_datasets[cid]))
 
-            # logging single selected client
+            # Log this client’s metrics when it was randomly selected
             if cid == client_to_log:
                 log_client_metrics(cid, avg_loss, acc, t_round)
                 if sparsity is not None:
-                    # log global sparsity
+                    # Log global sparsity and layer‐wise density histogram to W&B
                     wandb.log({
                         "round": t_round,
                         f"client_{cid}/sparsity": sparsity
                     })
-                    # log layer-wise density histogram
                     layer_densities = [
-                        masks[name].sum().item() / masks[name].numel() for name in masks
+                        masks[name].sum().item() / masks[name].numel()
+                        for name in masks
                     ]
                     wandb.log({
                         "round": t_round,

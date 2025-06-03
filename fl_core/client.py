@@ -69,34 +69,14 @@ def local_train_talos(
     warmup_epochs: int = 5,
 ):
     """
-    Simplified TaLoS local training:
-      • If `global_masks` is provided, reuse it.
-      • Otherwise, load or compute a single Fisher mask in `masks_dir`:
-          – fisher_global.pt
-          – mask_global.pt
-      • Apply the mask, run warmup+cosine LR over `epochs`, reapply mask each step.
-      • Return (state_dict, avg_loss, accuracy, sparsity, masks).
-
-    Args:
-        model:            The PyTorch model to fine-tune.
-        dataloader:       Local DataLoader for this client.
-        epochs:           Number of local epochs.
-        lr:               Base learning rate.
-        device:           torch.device ("cuda" or "cpu").
-        target_sparsity:  Fraction of total weights to prune (e.g. 0.05).
-        prune_rounds:     Number of iterations in calibrate_mask (often 1).
-        masks_dir:        Directory where fisher_global.pt & mask_global.pt live.
-        global_masks:     If not None, a dict of {param_name: binary_mask}.
-        warmup_epochs:    Number of epochs for linear warmup before cosine.
-
-    Returns:
-        Tuple of (state_dict, avg_loss, accuracy, global_sparsity, masks).
+    If `global_masks` is provided, reuse it.
+    Otherwise, load or compute a single Fisher mask in `masks_dir`.
     """
+
     model.to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
-    # Build warmup + cosine scheduler
     total_epochs = epochs
     w = min(warmup_epochs, total_epochs)
 
@@ -105,42 +85,40 @@ def local_train_talos(
             return (epoch_idx + 1) / float(total_epochs)
         if epoch_idx < w:
             return (epoch_idx + 1) / float(w)
-        # cosine annealing after warmup
         return 0.5 * (1.0 + math.cos(math.pi * (epoch_idx - w) / float(total_epochs - w)))
 
     scheduler = LambdaLR(optimizer, lr_fn)
 
-    # Ensure masks_dir exists if we may write files
     os.makedirs(masks_dir, exist_ok=True)
     fisher_path = os.path.join(masks_dir, "fisher_global.pt")
-    mask_path = os.path.join(masks_dir, "mask_global.pt")
+    mask_path   = os.path.join(masks_dir, "mask_global.pt")
 
-    # Decide mask source
+    # ─── Decide mask source ───
     if global_masks is not None:
         masks = global_masks
+
     else:
-        # Load or compute Fisher scores once
+        # 1) Load or compute Fisher scores
         if os.path.exists(fisher_path):
             fisher_scores = torch.load(fisher_path, map_location=device)
         else:
-            # Compute on this client’s dataloader (or supply a separate loader if needed)
             fisher_scores = compute_fisher_scores(model, dataloader, criterion, device)
             torch.save(fisher_scores, fisher_path)
 
-        # Load or compute mask
+        # 2) Load or compute mask
         if os.path.exists(mask_path):
             masks = torch.load(mask_path, map_location=device)
         else:
             masks = calibrate_mask(fisher_scores, target_sparsity, prune_rounds)
             torch.save(masks, mask_path)
 
-    # Apply mask once before training
+    # ─── Apply the mask once before training ───
     with torch.no_grad():
         for name, param in model.named_parameters():
             if name in masks:
                 param.mul_(masks[name].to(param.device))
 
-    # Local training loop, reapplying mask after each optimizer step
+    # ─── Local training loop ───
     total_loss = 0.0
     total_correct = 0
     total_samples = 0
@@ -155,16 +133,15 @@ def local_train_talos(
             loss.backward()
             optimizer.step()
 
-            # Re-apply mask in-place
+            # Re‐apply mask in‐place every step
             with torch.no_grad():
                 for name, param in model.named_parameters():
                     if name in masks:
                         param.mul_(masks[name].to(param.device))
 
-            # Accumulate metrics
             bs = labels.size(0)
             total_loss += loss.item() * bs
-            correct = torch.eq(outputs.argmax(dim=1), labels).sum().item()
+            correct = (outputs.argmax(dim=1) == labels).sum().item()
             total_correct += correct
             total_samples += bs
 
@@ -173,7 +150,7 @@ def local_train_talos(
     avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
     accuracy = total_correct / total_samples if total_samples > 0 else 0.0
 
-    # Compute global sparsity (fraction of pruned weights)
+    # Calculate global sparsity = fraction of weights pruned
     total_params = 0
     kept_params = 0
     for mask in masks.values():
