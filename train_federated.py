@@ -87,7 +87,7 @@ def main():
     # (optional) resume checkpoint
     starting_round = 0
     best_test_accuracy = 0.0
-    ckpt_path = config.get("checkpoint_path", "")
+    ckpt_path = config.CHECKPOINT_PATH  # MAIUSCOLO, esattamente come nel config.yaml
 
     global_model = DINO_ViT(num_classes=100, pretrained=True)
 
