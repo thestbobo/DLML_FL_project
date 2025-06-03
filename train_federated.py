@@ -6,7 +6,7 @@ import yaml
 import wandb
 from torch.utils.data import DataLoader, ConcatDataset, Subset
 import re
-from model_editing.TaLoS import compute_fisher_scores, calibrate_mask
+from model_editing.TaLoS import compute_fisher_scores, calibrate_mask, calibrate_mask_layerwise_qk
 from models.dino_ViT_b16 import DINO_ViT
 from fl_core.client import local_train, local_train_talos
 from fl_core.server import average_weights_fedavg
@@ -17,7 +17,7 @@ from project_utils.federated_metrics import (
     log_aggregated_class_distribution,
     log_round_info,
     log_global_metrics,
-    log_client_metrics
+    log_client_metrics,
 )
 
 
@@ -139,20 +139,31 @@ def main():
 
         print("\n>>> Preparing shared Fisher + mask (TaLoS) …")
         if need_to_compute_mask:
-            # 5.1 Compute Fisher scores on the entire dataset
+            # Compute Fisher scores on the entire dataset
             dummy = copy.deepcopy(global_model).to(device)
             dummy_criterion = torch.nn.CrossEntropyLoss()
 
             fisher_scores = compute_fisher_scores(dummy, calib_loader, dummy_criterion, device)
             torch.save(fisher_scores, global_fisher_file)
 
-            # 5.2 Calibrate the binary mask over multiple rounds
-            R = config.TALOS_PRUNE_ROUNDS
-            shared_masks = calibrate_mask(
+            # Calibrate the binary mask over multiple rounds
+
+            # ----- other way of computing mask -----
+            # R = config.TALOS_PRUNE_ROUNDS
+            # shared_masks = calibrate_mask(
+            #     fisher_scores,
+            #     target_sparsity=config.TALOS_TARGET_SPARSITY,
+            #     rounds=R
+            # )
+            # ---------------------------------------
+
+            # Build a layer‐wise Q/K float mask (10 % keep)
+            shared_masks = calibrate_mask_layerwise_qk(
+                dummy,
                 fisher_scores,
-                target_sparsity=config.TALOS_TARGET_SPARSITY,
-                rounds=R
+                keep_ratio_per_block=0.10
             )
+
             torch.save(shared_masks, global_mask_file)
             del dummy, fisher_scores
 
