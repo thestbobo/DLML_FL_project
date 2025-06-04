@@ -161,7 +161,7 @@ def main():
             shared_masks = calibrate_mask_layerwise_qk(
                 dummy,
                 fisher_scores,
-                keep_ratio_per_block=0.10,
+                keep_ratio_per_block=(1 - config.TALOS_TARGET_SPARSITY),
                 rounds=R
             )
 
@@ -189,11 +189,11 @@ def main():
     for t_round in range(starting_round + 1, config.ROUNDS + 1):
         print(f"\n--- Round {t_round} ---")
 
-        # 7.1 Select a subset of clients
+        # Select a subset of clients
         m = max(int(config.CLIENT_FRACTION * config.NUM_CLIENTS), 1)
         selected_clients = np.random.choice(config.NUM_CLIENTS, m, replace=False)
 
-        # 7.2 Log aggregated class distribution every 5 rounds
+        # Log aggregated class distribution every 5 rounds
         if t_round % 5 == 0:
             log_aggregated_class_distribution(client_datasets, selected_clients, t_round)
 
