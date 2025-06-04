@@ -259,6 +259,10 @@ def local_train_talos(
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
+    # -----DEBUG-----
+    print(">>> optimizer lr =", optimizer.param_groups[0]["lr"])
+    # --------------
+
     # Step‐based LR scheduler for warmup (if desired)
     if warmup_steps > 0:
         def lr_lambda(step_idx):

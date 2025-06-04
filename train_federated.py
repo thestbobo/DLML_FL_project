@@ -144,6 +144,26 @@ def main():
             dummy_criterion = torch.nn.CrossEntropyLoss()
 
             fisher_scores = compute_fisher_scores(dummy, calib_loader, dummy_criterion, device)
+
+            # ----DEBUG----
+            print(">>> Number of entries in fisher_scores:", len(fisher_scores))
+            # Print a few QKV entries:
+            for name in sorted(fisher_scores):
+                if "qkv.weight" in name or "qkv.bias" in name:
+                    print("  FISHER[QKV] →", name, "mean=", fisher_scores[name].mean().item())
+
+            print("\n>>> [DEBUG] Number of entries in fisher_scores:", len(fisher_scores))
+            # Look for any key that contains "qkv"
+            for name in sorted(fisher_scores.keys()):
+                if "qkv.weight" in name or "qkv.bias" in name:
+                    print("    FISHER[SCORE] key:", name,
+                          "   mean=", fisher_scores[name].mean().item(),
+                          "   max=", fisher_scores[name].max().item(),
+                          "   min=", fisher_scores[name].min().item())
+            # If you want to print just the first few keys overall:
+            print(">>> [DEBUG] First 10 fisher_scores keys:", list(fisher_scores.keys())[:10], "\n")
+            # --------------
+
             torch.save(fisher_scores, global_fisher_file)
 
             # Calibrate the binary mask over multiple rounds
