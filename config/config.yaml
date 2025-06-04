@@ -16,6 +16,7 @@ weight_decay: 0.00042327462676463
 momentum: 0.9579794867057544
 t_max: 50
 epochs: 50
+load_checkpoint: False
 checkpoint_path: '/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth' # "/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
 
