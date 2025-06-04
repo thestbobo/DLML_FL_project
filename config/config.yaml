@@ -18,6 +18,8 @@ t_max: 50
 epochs: 50
 load_checkpoint: False
 checkpoint_path: '/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth' # "/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
+# don't forget to add run_id and resume="must" to wandb init when loading a checkpoint
+
 out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
 
 finetuning_method: "dense"                             # fine-tuning method switch -> "dense" / "lora" / "talos"
