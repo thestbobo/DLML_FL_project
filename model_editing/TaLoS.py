@@ -106,151 +106,133 @@ def calibrate_mask_layerwise_qk(
     rounds=5
 ):
     """
-    Multi‐round layer‐wise TaLoS mask calibration on Q/K only.
+    TaLoS mask calibration (layer‐wise) over Q/K only for DINO_ViT.
 
-    Args:
-        model: torch.nn.Module (e.g. your DINO_ViT)
-        fisher_scores: dict[str,Tensor]
-           Precomputed Fisher diagonal for every parameter (all float Tensors).
-        keep_ratio_per_block: float in (0,1], e.g. 0.10 for 10% keep at final.
-        rounds: int ≥ 1
-           Number of pruning iterations (R). Each iteration shrinks the alive set.
+    – model: a DINO_ViT instance (so model.named_parameters() yields names like
+             "model.blocks.0.attn.qkv.weight", etc.).
+    – fisher_scores: dict[name→Tensor] from compute_fisher_scores(model,...).
+    – keep_ratio_per_block: e.g. 0.10 means “at the final round, keep 10% of Q/K.”
+      Internally, we do R rounds of (1 – s)^(r/R).
+    – rounds: how many iterative prune‐refine steps to do.
 
-    Returns:
-        masks: dict[str,Tensor]
-           A dict mapping each param_name → FloatTensor mask (0.0 or 1.0).
-           Only Q/K params may have 1.0; all others will be 0.0.
+    Returns: masks, a dict[name→FloatTensor of 0.0/1.0] for every trainable param.
+             Only the Q‐ and K‐rows in each “model.blocks.{i}.attn.qkv” layer will have
+             some 1.0s.  Everything else remains at 0.0.
     """
-    # 1) Initialize: for every param, start with mask = all zeros (float)
+
+    # Initialize: for every param, start with mask = all zeros (float)
     masks = {
         name: torch.zeros_like(param)
         for name, param in model.named_parameters()
         if param.requires_grad
     }
 
-    # 2) Find all block indices by scanning for "blocks.{i}.attn.q_proj.weight"
+    # Find all block indices by scanning for "model.blocks.{i}.attn.qkv.weight"
     block_indices = set()
     for name in fisher_scores:
-        if ".attn.q_proj.weight" in name:
+        if "model.blocks," in name and name.endswith(".attn.qkv.weight"):
             parts = name.split('.')
-            if parts[0] == "blocks":
-                try:
-                    idx = int(parts[1])
-                    block_indices.add(idx)
-                except:
-                    pass
+
+            try:
+                idx = int(parts[2])
+                block_indices.add(idx)
+            except:
+                pass
     block_indices = sorted(block_indices)
 
-    # 3) For each block i, we maintain a Boolean mask over that block’s Q/K
+    # For each block i, carve out a mask over only the Q/K rows of the fused qkv matrix
     for i in block_indices:
-        q_w_name = f"blocks.{i}.attn.q_proj.weight"
-        q_b_name = f"blocks.{i}.attn.q_proj.bias"
-        k_w_name = f"blocks.{i}.attn.k_proj.weight"
-        k_b_name = f"blocks.{i}.attn.k_proj.bias"
+        # — Exact names for this block’s fused QKV weight & bias:
+        qkv_w_name = f"model.blocks.{i}.attn.qkv.weight"
+        qkv_b_name = f"model.blocks.{i}.attn.qkv.bias"
 
-        # Check existence of biases
-        has_qb = (q_b_name in fisher_scores)
-        has_kb = (k_b_name in fisher_scores)
+        if qkv_w_name not in fisher_scores:
+            raise KeyError(f"Expected '{qkv_w_name}' in fisher_scores but it was not found.")
 
-        # 3.1) Extract the Fisher scores for Q/K parameters in this block
-        q_w_scores = fisher_scores[q_w_name]            # shape [D_q, D_model]
-        k_w_scores = fisher_scores[k_w_name]            # shape [D_k, D_model]
-        q_b_scores = fisher_scores[q_b_name] if has_qb else None
-        k_b_scores = fisher_scores[k_b_name] if has_kb else None
+        has_bias = (qkv_b_name in fisher_scores)
 
-        # 3.2) Flatten all Q/K scores into a single 1D vector
-        parts_flat = [q_w_scores.reshape(-1), k_w_scores.reshape(-1)]
-        if has_qb:
-            parts_flat.append(q_b_scores.reshape(-1))
-        if has_kb:
-            parts_flat.append(k_b_scores.reshape(-1))
+        #  Load the fused QKV fisher‐diagonal
+        qkv_w_scores = fisher_scores[qkv_w_name]  # Tensor of shape [3*D, D]
+        qkv_b_scores = fisher_scores[qkv_b_name] if has_bias else None  # [3*D] or None
 
-        all_scores_block = torch.cat(parts_flat, dim=0)  # length N_block
+        # Split into Q vs. K portions (ignore V)
+        D_out, D_in = qkv_w_scores.shape
+        if D_out % 3 != 0:
+            raise ValueError(
+                f"Expected '{qkv_w_name}' to have out‐dim multiple of 3, but got {D_out}"
+            )
+        block_chunk = D_out // 3  # number of rows per Q, K, V slice
+
+        # Flatten Q‐weight and K‐weight rows into 1D
+        q_w_flat = qkv_w_scores[0: block_chunk, :].reshape(-1)
+        k_w_flat = qkv_w_scores[block_chunk: 2 * block_chunk, :].reshape(-1)
+
+        # Flatten Q‐bias and K‐bias if bias exists
+        if has_bias:
+            qb_flat = qkv_b_scores[0: block_chunk]
+            kb_flat = qkv_b_scores[block_chunk: 2 * block_chunk]
+            all_scores_block = torch.cat([q_w_flat, k_w_flat, qb_flat, kb_flat], dim=0)
+        else:
+            all_scores_block = torch.cat([q_w_flat, k_w_flat], dim=0)
+
         N_block = all_scores_block.numel()
         if N_block == 0:
-            # No Q/K in this block? (unlikely) → skip
+            # No Q/K in this block → skip
             continue
 
-        # 3.3) Initialize this block’s Boolean “alive” mask = all True
-        #      We store it as a 1D BoolTensor of length N_block for convenience,
-        #      then reshape back to each param’s shape each iteration.
+        # Create a boolean “alive” mask (all True initially)
         alive_bool = torch.ones(N_block, dtype=torch.bool, device=all_scores_block.device)
 
-        # 3.4) Now iterate over r = 1..rounds to refine this block’s mask
+        # Iterative prune‐and‐refine (R rounds)
         for r in range(1, rounds + 1):
-            # (a) Desired keep‐fraction at iteration r:
-            #     keep_frac = (keep_ratio_per_block)^(r / rounds)
             block_keep_frac = keep_ratio_per_block ** (r / float(rounds))
-
-            # (b) Count how many are currently alive
-            alive_indices = alive_bool.nonzero(as_tuple=False).reshape(-1)  # 1D indices
+            alive_indices = alive_bool.nonzero(as_tuple=False).reshape(-1)
             num_alive = alive_indices.numel()
             if num_alive == 0:
-                # nothing left alive → all zeros, break out
                 alive_bool.zero_()
                 break
 
-            # (c) Compute how many to keep this round
             keep_n = int(math.ceil(block_keep_frac * num_alive))
             if keep_n < 1:
                 keep_n = 1
             if keep_n >= num_alive:
-                # keep everyone currently alive → skip
+                # Keep all currently alive → no change
                 continue
 
-            # (d) Gather the Fisher scores of the currently‐alive subset
-            #     “alive_indices” indexes into all_scores_block
             alive_scores = all_scores_block[alive_indices]
-
-            # (e) Find threshold τ = smallest value among top-keep_n of alive_scores
             topk_vals, _ = torch.topk(alive_scores, keep_n, largest=True)
             tau = topk_vals.min()
-
-            # (f) Update alive_bool: among those currently alive, only keep if score ≥ τ
-            #    We do this by:
-            #      alive_bool_new = (all_scores_block >= τ)  AND  alive_bool_old
-            #    so that we only prune within “alive” set, not resurrect pruned ones.
             mask_this_round = (all_scores_block >= tau) & alive_bool
             alive_bool.copy_(mask_this_round)
 
-            # loop to next r
-
-        # 3.5) After R rounds, alive_bool marks exactly the top‐k entries (k ≈ k*N_block).
-        #      Now we split alive_bool back into each of the four param‐tensors:
-        #      - q_w_scores.reshape(-1) → shape = q_w_scores.numel()
-        #      - k_w_scores.reshape(-1) → shape = k_w_scores.numel()
-        #      - q_b_scores.reshape(-1) → if exists
-        #      - k_b_scores.reshape(-1) → if exists
-
-        # Start index pointer over alive_bool
+        # 3.5) Now “alive_bool” marks exactly which Q/K entries survive. Copy back into masks.
         idx0 = 0
 
-        #  • Q weight portion
-        q_w_numel = q_w_scores.numel()
-        q_w_alive = alive_bool[idx0 : idx0 + q_w_numel].reshape(q_w_scores.shape)
-        masks[q_w_name].copy_(q_w_alive.float())  # Convert to float 0.0/1.0
+        # — Q‐weights slice:
+        q_w_numel = block_chunk * D_in
+        q_w_alive = alive_bool[idx0: idx0 + q_w_numel].reshape((block_chunk, D_in))
+        masks[qkv_w_name][0: block_chunk, :].copy_(q_w_alive.float())
         idx0 += q_w_numel
 
-        #  • K weight portion
-        k_w_numel = k_w_scores.numel()
-        k_w_alive = alive_bool[idx0 : idx0 + k_w_numel].reshape(k_w_scores.shape)
-        masks[k_w_name].copy_(k_w_alive.float())
+        # — K‐weights slice:
+        k_w_numel = block_chunk * D_in
+        k_w_alive = alive_bool[idx0: idx0 + k_w_numel].reshape((block_chunk, D_in))
+        masks[qkv_w_name][block_chunk: 2 * block_chunk, :].copy_(k_w_alive.float())
         idx0 += k_w_numel
 
-        #  • Q bias portion (if present)
-        if has_qb:
-            q_b_numel = q_b_scores.numel()
-            q_b_alive = alive_bool[idx0 : idx0 + q_b_numel].reshape(q_b_scores.shape)
-            masks[q_b_name].copy_(q_b_alive.float())
+        # — Q‐bias slice (if present):
+        if has_bias:
+            q_b_numel = block_chunk
+            q_b_alive = alive_bool[idx0: idx0 + q_b_numel].reshape((block_chunk,))
+            masks[qkv_b_name][0: block_chunk].copy_(q_b_alive.float())
             idx0 += q_b_numel
 
-        #  • K bias portion (if present)
-        if has_kb:
-            k_b_numel = k_b_scores.numel()
-            k_b_alive = alive_bool[idx0 : idx0 + k_b_numel].reshape(k_b_scores.shape)
-            masks[k_b_name].copy_(k_b_alive.float())
+            # — K‐bias slice:
+            k_b_numel = block_chunk
+            k_b_alive = alive_bool[idx0: idx0 + k_b_numel].reshape((block_chunk,))
+            masks[qkv_b_name][block_chunk: 2 * block_chunk].copy_(k_b_alive.float())
             idx0 += k_b_numel
 
-        # At this point, idx0 == N_block. Move on to next block.
+        # The V‐portion (rows 2*block_chunk : 3*block_chunk) remains zero in both weight & bias
 
     return masks
