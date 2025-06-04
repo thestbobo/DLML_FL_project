@@ -270,16 +270,36 @@ def main():
                     warmup_steps=warmup_eps * (cnt // config.BATCH_SIZE)
                 )
 
-                # Compute Q/K sparsity (rather than global) for logging
+                # Compute QKV sparsity (for logging) by counting mask entries under "attn.qkv"
                 qk_total = 0
                 qk_kept = 0
-                for name in masks:
-                    if ("attn.q_proj" in name) or ("attn.k_proj" in name):
-                        qk_total += masks[name].numel()
-                        qk_kept += int(masks[name].sum().item())
-                qk_sparsity = 1.0 - (qk_kept / qk_total) if qk_total > 0 else 0.0
-                sparsity = qk_sparsity
+                for name, mask_tensor in masks.items():
+                    # look for the fused QKV weight & bias
+                    if "attn.qkv.weight" in name:
+                        # weight tensor shape is [3*D, D], but only first 2/3 of rows (Q & K) count
+                        D_out, D_in = mask_tensor.shape
+                        chunk = D_out // 3
+                        # sum only over the Q rows and K rows:
+                        kept_q = mask_tensor[0:chunk, :].sum().item()
+                        kept_k = mask_tensor[chunk:2 * chunk, :].sum().item()
+                        qk_kept += (kept_q + kept_k)
+                        # total possible Q + K entries:
+                        qk_total += (2 * chunk * D_in)
 
+                    if "attn.qkv.bias" in name:
+                        # bias shape is [3*D], first 2/3 are Q‐bias and K‐bias
+                        D_out = mask_tensor.numel()
+                        chunk = D_out // 3
+                        kept_qb = mask_tensor[0:chunk].sum().item()
+                        kept_kb = mask_tensor[chunk:2 * chunk].sum().item()
+                        qk_kept += (kept_qb + kept_kb)
+                        # total possible Q + K bias entries:
+                        qk_total += (2 * chunk)
+
+                # Now compute sparsity = fraction pruned = 1 − (kept / total)
+                qk_sparsity = 1.0 - (qk_kept / qk_total) if qk_total > 0 else 0.0
+
+                print(f"  Client {cid} sparsity={100 * qk_sparsity:.2f}%")
             else:
                 raise ValueError(f"Unknown FINETUNE_METHOD '{method}'")
 
