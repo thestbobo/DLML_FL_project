@@ -242,7 +242,7 @@ def main():
                     local_steps=config.LOCAL_STEPS,
                     lr=lr_round,
                     device=device,
-                    target_sparsity=config.TALOS_TARGET_SPARSITY,
+                    target_sparsity=(1-config.TALOS_TARGET_SPARSITY),
                     prune_rounds=config.TALOS_PRUNE_ROUNDS,
                     masks_dir=masks_root,  # pass the same root where we saved global_mask
                     global_masks=shared_masks,  # force‐use the precomputed global mask

@@ -42,12 +42,12 @@ def calibrate_mask(fisher_scores, target_sparsity, rounds):
 
     for r in range(1, rounds + 1):
         keep_frac = (1 - target_sparsity) ** (r / rounds)
-        keep_n    = int(total * keep_frac)
+        keep_n = int(total * keep_frac)
 
         # Gather all currently‐alive scores
         available_scores = []
         for n in masks:
-            tensor    = fisher_scores[n]
+            tensor = fisher_scores[n]
             mask_bool = masks[n].bool()
             if mask_bool.any():
                 available_scores.append(tensor[mask_bool].reshape(-1))
@@ -58,7 +58,7 @@ def calibrate_mask(fisher_scores, target_sparsity, rounds):
             break
 
         all_scores = torch.cat(available_scores)
-        num_avail  = all_scores.numel()
+        num_avail = all_scores.numel()
 
         if keep_n <= 0:
             for n in masks:
