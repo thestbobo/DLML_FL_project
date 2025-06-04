@@ -167,7 +167,7 @@ def local_train(
     local_steps: int,
     lr: float,
     device: torch.device,
-    warmup_steps: int = 20,  # if you still want a step-based warmup
+    warmup_steps: int = 20,
 ):
     """
     Dense local training for exactly 'local_steps' optimizer updates.
@@ -185,7 +185,7 @@ def local_train(
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
-    # Step‐based LR scheduler: simple linear warmup → constant
+    # Step‐based warmup scheduler (linear ramp for `warmup_steps` steps)
     if warmup_steps > 0:
         def lr_lambda(step_idx):
             return min((step_idx + 1) / float(warmup_steps), 1.0)
@@ -198,7 +198,7 @@ def local_train(
     total_samples = 0
     model.train()
 
-    # Create an infinite cycling iterator over the DataLoader
+    # Create an infinite cycling iterator over the DataLoader (for steps)
     infinite_loader = itertools.cycle(dataloader)
 
     for step in range(local_steps):
@@ -270,7 +270,7 @@ def local_train_talos(
     # === Build or load TaLoS mask ===
     os.makedirs(masks_dir, exist_ok=True)
     fisher_path = os.path.join(masks_dir, "fisher_global.pt")
-    mask_path   = os.path.join(masks_dir, "mask_global.pt")
+    mask_path = os.path.join(masks_dir, "mask_global.pt")
 
     if global_masks is not None:
         masks = global_masks
@@ -286,10 +286,11 @@ def local_train_talos(
         if os.path.exists(mask_path):
             masks = torch.load(mask_path, map_location=device)
         else:
+            keep_ratio = 1.0 - target_sparsity
             masks = calibrate_mask_layerwise_qk(
                 model,
                 fisher_scores,
-                keep_ratio_per_block=target_sparsity,
+                keep_ratio_per_block=keep_ratio,
                 rounds=prune_rounds
             )
             torch.save(masks, mask_path)
