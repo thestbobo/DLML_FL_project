@@ -42,12 +42,12 @@ def calibrate_mask(fisher_scores, target_sparsity, rounds):
 
     for r in range(1, rounds + 1):
         keep_frac = (1 - target_sparsity) ** (r / rounds)
-        keep_n    = int(total * keep_frac)
+        keep_n = int(total * keep_frac)
 
         # Gather all currently‐alive scores
         available_scores = []
         for n in masks:
-            tensor    = fisher_scores[n]
+            tensor = fisher_scores[n]
             mask_bool = masks[n].bool()
             if mask_bool.any():
                 available_scores.append(tensor[mask_bool].reshape(-1))
@@ -58,7 +58,7 @@ def calibrate_mask(fisher_scores, target_sparsity, rounds):
             break
 
         all_scores = torch.cat(available_scores)
-        num_avail  = all_scores.numel()
+        num_avail = all_scores.numel()
 
         if keep_n <= 0:
             for n in masks:
@@ -101,156 +101,156 @@ def calibrate_mask_one_shot(model, fisher_scores, target_sparsity, rounds):
 
 def calibrate_mask_layerwise_qk(
     model,
-    fisher_scores,
-    keep_ratio_per_block=0.10,
-    rounds=5
+    fisher_scores: dict,
+    keep_ratio_per_block: float = 0.10,
+    rounds: int = 5
 ):
     """
-    Multi‐round layer‐wise TaLoS mask calibration on Q/K only.
+    TaLoS mask calibration for DINO_ViT fused QKV layers only.
 
-    Args:
-        model: torch.nn.Module (e.g. your DINO_ViT)
-        fisher_scores: dict[str,Tensor]
-           Precomputed Fisher diagonal for every parameter (all float Tensors).
-        keep_ratio_per_block: float in (0,1], e.g. 0.10 for 10% keep at final.
-        rounds: int ≥ 1
-           Number of pruning iterations (R). Each iteration shrinks the alive set.
+    – We only insert mask entries for:
+         "model.blocks.{i}.attn.qkv.weight"
+         "model.blocks.{i}.attn.qkv.bias"
+
+    – We prune Q and K (first 2/3 of each tensor) by Fisher‐score over `rounds`.
+    – We force all V‐rows (last 1/3) to 1.0 (i.e. keep them).
+    – All other parameters remain untouched (not in `masks`).
 
     Returns:
-        masks: dict[str,Tensor]
-           A dict mapping each param_name → FloatTensor mask (0.0 or 1.0).
-           Only Q/K params may have 1.0; all others will be 0.0.
+      masks: dict[name → FloatTensor(0/1)] that only contains QKV keys.
     """
-    # 1) Initialize: for every param, start with mask = all zeros (float)
-    masks = {
-        name: torch.zeros_like(param)
-        for name, param in model.named_parameters()
-        if param.requires_grad
-    }
 
-    # 2) Find all block indices by scanning for "blocks.{i}.attn.q_proj.weight"
+    masks = {}  # only QKV keys will be inserted
+
+    # 1) Find which block indices contain a fused QKV layer
     block_indices = set()
     for name in fisher_scores:
-        if ".attn.q_proj.weight" in name:
-            parts = name.split('.')
-            if parts[0] == "blocks":
-                try:
-                    idx = int(parts[1])
-                    block_indices.add(idx)
-                except:
-                    pass
+        if name.startswith("model.blocks.") and name.endswith(".attn.qkv.weight"):
+            parts = name.split(".")
+            # ["model","blocks","{i}","attn","qkv","weight"]
+            try:
+                idx = int(parts[2])
+                block_indices.add(idx)
+            except ValueError:
+                pass
+
     block_indices = sorted(block_indices)
+    print(">>> [DEBUG] block_indices found:", block_indices)
+    if not block_indices:
+        print("    [WARN] No QKV blocks matched; masks will stay empty.")
 
-    # 3) For each block i, we maintain a Boolean mask over that block’s Q/K
+    # 2) For each block i, build a mask for Q+K (pruned) and V (kept)
     for i in block_indices:
-        q_w_name = f"blocks.{i}.attn.q_proj.weight"
-        q_b_name = f"blocks.{i}.attn.q_proj.bias"
-        k_w_name = f"blocks.{i}.attn.k_proj.weight"
-        k_b_name = f"blocks.{i}.attn.k_proj.bias"
+        qkv_w_name = f"model.blocks.{i}.attn.qkv.weight"
+        qkv_b_name = f"model.blocks.{i}.attn.qkv.bias"
 
-        # Check existence of biases
-        has_qb = (q_b_name in fisher_scores)
-        has_kb = (k_b_name in fisher_scores)
+        # Create zero‐filled mask tensors of the same shape as fisher_scores
+        base_w = fisher_scores[qkv_w_name]  # shape [3*D, D]
+        masks[qkv_w_name] = torch.zeros_like(base_w)
 
-        # 3.1) Extract the Fisher scores for Q/K parameters in this block
-        q_w_scores = fisher_scores[q_w_name]            # shape [D_q, D_model]
-        k_w_scores = fisher_scores[k_w_name]            # shape [D_k, D_model]
-        q_b_scores = fisher_scores[q_b_name] if has_qb else None
-        k_b_scores = fisher_scores[k_b_name] if has_kb else None
+        has_bias = (qkv_b_name in fisher_scores)
+        if has_bias:
+            base_b = fisher_scores[qkv_b_name]  # shape [3*D]
+            masks[qkv_b_name] = torch.zeros_like(base_b)
 
-        # 3.2) Flatten all Q/K scores into a single 1D vector
-        parts_flat = [q_w_scores.reshape(-1), k_w_scores.reshape(-1)]
-        if has_qb:
-            parts_flat.append(q_b_scores.reshape(-1))
-        if has_kb:
-            parts_flat.append(k_b_scores.reshape(-1))
+        # 2.1) Extract Fisher‐scores for Q/K portions
+        D_out, D_in = base_w.shape
+        if D_out % 3 != 0:
+            raise ValueError(f"Expected {qkv_w_name}.shape[0] divisible by 3, got {D_out}")
+        block_chunk = D_out // 3  # # rows per Q/K/V
 
-        all_scores_block = torch.cat(parts_flat, dim=0)  # length N_block
+        # Flatten Q‐weights and K‐weights
+        q_w_flat = base_w[0:block_chunk, :].reshape(-1)
+        k_w_flat = base_w[block_chunk:2*block_chunk, :].reshape(-1)
+
+        if has_bias:
+            qb_flat = base_b[0:block_chunk]
+            kb_flat = base_b[block_chunk:2*block_chunk]
+            all_scores_block = torch.cat([q_w_flat, k_w_flat, qb_flat, kb_flat], dim=0)
+        else:
+            all_scores_block = torch.cat([q_w_flat, k_w_flat], dim=0)
+
         N_block = all_scores_block.numel()
-        if N_block == 0:
-            # No Q/K in this block? (unlikely) → skip
-            continue
-
-        # 3.3) Initialize this block’s Boolean “alive” mask = all True
-        #      We store it as a 1D BoolTensor of length N_block for convenience,
-        #      then reshape back to each param’s shape each iteration.
         alive_bool = torch.ones(N_block, dtype=torch.bool, device=all_scores_block.device)
 
-        # 3.4) Now iterate over r = 1..rounds to refine this block’s mask
+        # 2.2) Iteratively prune Q/K over `rounds`
         for r in range(1, rounds + 1):
-            # (a) Desired keep‐fraction at iteration r:
-            #     keep_frac = (keep_ratio_per_block)^(r / rounds)
             block_keep_frac = keep_ratio_per_block ** (r / float(rounds))
-
-            # (b) Count how many are currently alive
-            alive_indices = alive_bool.nonzero(as_tuple=False).reshape(-1)  # 1D indices
+            alive_indices = alive_bool.nonzero(as_tuple=False).reshape(-1)
             num_alive = alive_indices.numel()
             if num_alive == 0:
-                # nothing left alive → all zeros, break out
                 alive_bool.zero_()
                 break
 
-            # (c) Compute how many to keep this round
             keep_n = int(math.ceil(block_keep_frac * num_alive))
             if keep_n < 1:
                 keep_n = 1
             if keep_n >= num_alive:
-                # keep everyone currently alive → skip
+                # keep all currently alive → no change this round
                 continue
 
-            # (d) Gather the Fisher scores of the currently‐alive subset
-            #     “alive_indices” indexes into all_scores_block
             alive_scores = all_scores_block[alive_indices]
-
-            # (e) Find threshold τ = smallest value among top-keep_n of alive_scores
             topk_vals, _ = torch.topk(alive_scores, keep_n, largest=True)
             tau = topk_vals.min()
-
-            # (f) Update alive_bool: among those currently alive, only keep if score ≥ τ
-            #    We do this by:
-            #      alive_bool_new = (all_scores_block >= τ)  AND  alive_bool_old
-            #    so that we only prune within “alive” set, not resurrect pruned ones.
             mask_this_round = (all_scores_block >= tau) & alive_bool
             alive_bool.copy_(mask_this_round)
 
-            # loop to next r
-
-        # 3.5) After R rounds, alive_bool marks exactly the top‐k entries (k ≈ k*N_block).
-        #      Now we split alive_bool back into each of the four param‐tensors:
-        #      - q_w_scores.reshape(-1) → shape = q_w_scores.numel()
-        #      - k_w_scores.reshape(-1) → shape = k_w_scores.numel()
-        #      - q_b_scores.reshape(-1) → if exists
-        #      - k_b_scores.reshape(-1) → if exists
-
-        # Start index pointer over alive_bool
+        # 2.3) Write back Q/K “1.0” into masks; V stays zero for now
         idx0 = 0
 
-        #  • Q weight portion
-        q_w_numel = q_w_scores.numel()
-        q_w_alive = alive_bool[idx0 : idx0 + q_w_numel].reshape(q_w_scores.shape)
-        masks[q_w_name].copy_(q_w_alive.float())  # Convert to float 0.0/1.0
+        # Q‐rows
+        q_w_numel = block_chunk * D_in
+        q_w_alive = alive_bool[idx0 : idx0 + q_w_numel].reshape((block_chunk, D_in))
+        masks[qkv_w_name][0:block_chunk, :].copy_(q_w_alive.float())
         idx0 += q_w_numel
 
-        #  • K weight portion
-        k_w_numel = k_w_scores.numel()
-        k_w_alive = alive_bool[idx0 : idx0 + k_w_numel].reshape(k_w_scores.shape)
-        masks[k_w_name].copy_(k_w_alive.float())
+        # K‐rows
+        k_w_numel = block_chunk * D_in
+        k_w_alive = alive_bool[idx0 : idx0 + k_w_numel].reshape((block_chunk, D_in))
+        masks[qkv_w_name][block_chunk:2*block_chunk, :].copy_(k_w_alive.float())
         idx0 += k_w_numel
 
-        #  • Q bias portion (if present)
-        if has_qb:
-            q_b_numel = q_b_scores.numel()
-            q_b_alive = alive_bool[idx0 : idx0 + q_b_numel].reshape(q_b_scores.shape)
-            masks[q_b_name].copy_(q_b_alive.float())
+        # Q-bias and K-bias (if exists)
+        if has_bias:
+            q_b_numel = block_chunk
+            q_b_alive = alive_bool[idx0 : idx0 + q_b_numel].reshape((block_chunk,))
+            masks[qkv_b_name][0:block_chunk].copy_(q_b_alive.float())
             idx0 += q_b_numel
 
-        #  • K bias portion (if present)
-        if has_kb:
-            k_b_numel = k_b_scores.numel()
-            k_b_alive = alive_bool[idx0 : idx0 + k_b_numel].reshape(k_b_scores.shape)
-            masks[k_b_name].copy_(k_b_alive.float())
+            k_b_numel = block_chunk
+            k_b_alive = alive_bool[idx0 : idx0 + k_b_numel].reshape((block_chunk,))
+            masks[qkv_b_name][block_chunk:2*block_chunk].copy_(k_b_alive.float())
             idx0 += k_b_numel
 
-        # At this point, idx0 == N_block. Move on to next block.
+        # 2.4) **Force all V‐rows to 1** (i.e. keep them)
+        # For weights:
+        masks[qkv_w_name][2*block_chunk : 3*block_chunk, :].fill_(1.0)
+        if has_bias:
+            masks[qkv_b_name][2*block_chunk : 3*block_chunk].fill_(1.0)
+
+    # 2.5) (Optional) debug‐print overall Q/K keep‐fraction
+    total_keep = 0
+    total_qk = 0
+    for name, m in masks.items():
+        if name.endswith(".attn.qkv.weight"):
+            D_out, D_in = m.shape
+            bc = D_out // 3
+            keep_q = m[0:bc, :].sum().item()
+            keep_k = m[bc:2*bc, :].sum().item()
+            total_keep += (keep_q + keep_k)
+            total_qk += (2 * bc * D_in)
+        if name.endswith(".attn.qkv.bias"):
+            length = m.numel()
+            bc = length // 3
+            keep_qb = m[0:bc].sum().item()
+            keep_kb = m[bc:2*bc].sum().item()
+            total_keep += (keep_qb + keep_kb)
+            total_qk += (2 * bc)
+
+    if total_qk > 0:
+        print(f">>> [DEBUG] FINAL MASK Q/K KEEP = {int(total_keep)}/{int(total_qk)} "
+              f"≈ {100 * total_keep/total_qk:.2f}%")
+    else:
+        print(">>> [DEBUG] FINAL MASK has no Q/K entries.")
 
     return masks
