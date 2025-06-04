@@ -226,10 +226,10 @@ def main():
                 w, avg_loss, acc = local_train(
                     local_model,
                     loader,
-                    epochs=config.LOCAL_EPOCHS,
+                    local_steps=config.LOCAL_STEPS,
                     lr=lr_round,
                     device=device,
-                    warmup_epochs=warmup_eps
+                    warmup_steps=warmup_eps * (cnt // config.BATCH_SIZE)
                 )
                 sparsity = None
                 masks = None
@@ -239,14 +239,14 @@ def main():
                 w, avg_loss, acc, sparsity, masks = local_train_talos(
                     local_model,
                     loader,
-                    epochs=config.LOCAL_EPOCHS,
+                    local_steps=config.LOCAL_STEPS,
                     lr=lr_round,
                     device=device,
                     target_sparsity=config.TALOS_TARGET_SPARSITY,
                     prune_rounds=config.TALOS_PRUNE_ROUNDS,
                     masks_dir=masks_root,  # pass the same root where we saved global_mask
                     global_masks=shared_masks,  # force‐use the precomputed global mask
-                    warmup_epochs=warmup_eps
+                    warmup_steps=warmup_eps * (cnt // config.BATCH_SIZE)
                 )
             else:
                 raise ValueError(f"Unknown FINETUNE_METHOD '{method}'")
