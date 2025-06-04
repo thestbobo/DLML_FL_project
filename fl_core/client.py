@@ -305,6 +305,14 @@ def local_train_talos(
             if name in masks:
                 param.mul_(masks[name].to(param.device))
 
+    # DEBUG: Inspect one block’s weights to ensure they are not all zero
+    with torch.no_grad():
+        sample_name = f"model.blocks.0.attn.qkv.weight"
+        w = model.state_dict()[sample_name]
+        nonzero = (w.abs() > 1e-9).sum().item()
+        total = w.numel()
+        print(f">>> [DEBUG] After initial mask apply → {sample_name}: {nonzero}/{total} nonzero")
+
     total_loss = 0.0
     total_correct = 0
     total_samples = 0
