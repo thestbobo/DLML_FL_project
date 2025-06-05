@@ -56,11 +56,11 @@ LR: 0.001
 LR_DECAY: 0.99        # per-round global lr decay factor
 WARMUP_EPOCHS: 1      # local warm-up scheduler
 ROUNDS: 100
-IID: True  # Set to False for non-iid
+IID: False  # Set to False for non-iid
 NC: 1  # Number of classes per client in non-iid setting
-CHECKPOINT_PATH: "" #'/content/drive/MyDrive/DL_project/federated_checkpoints/fl_model_round_25.pth'            # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
+CHECKPOINT_PATH: "/content/drive/MyDrive/DL_project/federated_checkpoints/fl_model_round_45.pth" #'/content/drive/MyDrive/DL_project/federated_checkpoints/fl_model_round_25.pth'            # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 OUT_CHECKPOINT_PATH: "/content/drive/MyDrive/DL_project/federated_checkpoints"
-FINETUNE_METHOD: 'talos'           # or "dense"
+FINETUNE_METHOD: 'dense'           # or "dense"
 
 # talos fine-tuning (federated)
 TALOS_TARGET_SPARSITY: 0.20       # e.g. keep 1-x % of params
