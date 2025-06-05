@@ -231,6 +231,8 @@ def main():
     best_val_accuracy = 0.0
 
     ckpt_path = config.get("checkpoint_path", "")
+    if ckpt_path.split("/")[-1].startswith("best"): best = True
+    else: best = False
     if config.load_checkpoint and ckpt_path and os.path.exists(ckpt_path):
         print(f"Loading checkpoint from {ckpt_path} …")
         ckpt = torch.load(ckpt_path, map_location=device)
@@ -241,9 +243,11 @@ def main():
 
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-
         starting_epoch = ckpt.get("epoch", 0)
-        best_val_accuracy = ckpt.get("val_metrics", {}).get("top_1_accuracy", 0.0)
+        if best:
+            best_val_accuracy = ckpt.get("best_val_metrics", {}).get("top_1_accuracy", 0.0)
+        else:
+            best_val_accuracy = ckpt.get("val_metrics", {}).get("top_1_accuracy", 0.0)
         print(f"Resumed from epoch {starting_epoch} with best val@1 = {best_val_accuracy * 100:.2f}%")
     else:
         print("No valid checkpoint found; starting from scratch.")
@@ -302,7 +306,7 @@ def main():
                                'best_val_metrics': val_metrics,
                                'best_val_loss': val_loss,
                                'best_train_metrics': train_metrics,
-                               'best_val_loss': val_loss,
+                               'best_train_loss': train_loss,
                                'finetuning_method': config.finetuning_method}
             os.makedirs(config['out_checkpoint_dir'], exist_ok=True)
             torch.save(best_checkpoint, os.path.join(config['out_checkpoint_dir'], f"best_cent_ckpt_{config.finetuning_method}_epoch_{epoch + 1}.pth"))
