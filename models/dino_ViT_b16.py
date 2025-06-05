@@ -12,10 +12,10 @@ class DINO_ViT(nn.Module):
             for param in self.model.parameters():
                 param.requires_grad = False
 
-            self.classifier = nn.Sequential(
-                                nn.Dropout(p=0.3),
-                                nn.Linear(384, num_classes)
-            )
+        self.classifier = nn.Sequential(
+                            nn.Dropout(p=0.3),
+                            nn.Linear(384, num_classes)
+        )
 
     def forward(self, x):
         x = self.model(x)
