@@ -94,7 +94,11 @@ def main():
     ckpt_path = config.CHECKPOINT_PATH
 
     # building model / loading existing one from config
-    global_model = DINO_ViT(num_classes=100, pretrained=True)
+    if method == "talos":
+        global_model = DINO_ViT(num_classes=100, pretrained=True, frozen_backbone=False)
+    else:
+        global_model = DINO_ViT(num_classes=100, pretrained=True, frozen_backbone=True)
+
     print("[INFO] Loading from checkpoint:", ckpt_path)
     print("[INFO] Exists?", os.path.exists(ckpt_path))
 
