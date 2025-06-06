@@ -50,7 +50,7 @@ def evaluate(model, dataloader):
 
 def main():
     # load config / init WandB
-    with open("config/config.yaml") as f:
+    with open("config/config.yaml", encoding="utf-8") as f:
         default_config = yaml.safe_load(f)
 
     wandb.init(project="Federated-DINO-ViT", config=default_config)
@@ -187,7 +187,7 @@ def main():
                 dummy,
                 fisher_scores,
                 keep_ratio_per_block=keep_ratio,
-                rounds=R
+                max_rounds=R
             )
 
             torch.save(shared_masks, global_mask_file)
