@@ -62,33 +62,53 @@ def main():
     model = DINO_ViT().to(device)
 
     # Load checkpoint
-    checkpoint_name = "centralized_checkpoint_epoch_50.pth"
-    checkpoint_path = os.path.join("checkpoints", "sparse_bigger_than", checkpoint_name)   # two separate folders for sparse and dense
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    # checkpoint_name = "best_cent_ckpt_dense_epoch_49.pth"
+    checkpoint_path = os.path.join("checkpoints", "12g556mn")   # two separate folders for sparse and dense
+    best_acc, best_loss = 0.0, 100.0
+    best_loss_checkpoint = None
+    best_acc_checkpoint = None
 
-    if checkpoint_name[0:4] == "best":
-        val_acc = checkpoint.get('best_val_metrics', {}).get('top_1_accuracy', 0.0)
-    else:
-        val_acc = checkpoint.get('val_metrics', {}).get('top_1_accuracy', 0.0)
-    print(f"Loaded model from epoch {checkpoint['epoch']} with val acc: {val_acc*100:.2f}%")
+    for checkpoint_name in sorted(os.listdir(checkpoint_path)):
+        checkpoint_p = os.path.join(checkpoint_path, checkpoint_name)
+        checkpoint = torch.load(checkpoint_p, map_location=device)
+        model.load_state_dict(checkpoint["model_state_dict"])
 
-    # Loss function
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1).to(device)
+        if checkpoint_name[0:4] == "best":
+            metrics = checkpoint.get('best_val_metrics', {})
+            val_loss = checkpoint.get('best_val_loss', 0.0)
+        else:
+            metrics = checkpoint.get('val_metrics', {})
+            val_loss = checkpoint.get('val_loss', 0.0)
 
-    # # Optional: initialize WandB run for test logging
-    # wandb.init(project="CIFAR-100_centralized", name="final_test", config=config)
+        print(f"\nLoaded model from epoch {checkpoint['epoch']} with validation metrics:")
+        print(f"\tTop-1 Accuracy: {metrics.get('top_1_accuracy', 0.0) * 100:.2f}%")
+        print(f"\tTop-5 Accuracy: {metrics.get('top_5_accuracy', 0.0) * 100:.2f}%")
+        print(f"\tF1-Score: {metrics.get('f1_score', 0.0) * 100:.2f}%")
+        print(f"\tLoss: {val_loss:.2f}")
 
-    # Run test
-    test_loss, test_acc = test(model, test_loader, criterion, device, verbose=True)
+        # Loss function
+        criterion = nn.CrossEntropyLoss().to(device)
 
-    # # Log to WandB
-    # wandb.log({
-    #     "test_loss": test_loss,
-    #     "test_accuracy": test_acc
-    # })
-    #
-    # wandb.finish()
+        # # Optional: initialize WandB run for test logging
+        # wandb.init(project="CIFAR-100_centralized", name="final_test", config=config)
+
+        # Run test
+        test_loss, test_acc = test(model, test_loader, criterion, device, verbose=True)
+
+        if best_loss > test_loss:
+            best_loss = test_loss
+            best_loss_checkpoint = checkpoint_name
+        if best_acc < test_acc:
+            best_acc = test_acc
+            best_acc_checkpoint = checkpoint_name
+
+        # # Log to WandB
+        # wandb.log({
+        #     "test_loss": test_loss,
+        #     "test_accuracy": test_acc
+        # })
+        #
+        # wandb.finish()
 
 
 if __name__ == "__main__":
