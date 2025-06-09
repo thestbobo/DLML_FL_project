@@ -350,6 +350,11 @@ def calibrate_mask_layerwise_qk(
             rng = torch.Generator(device=device).manual_seed(0)
             perm = torch.randperm(N_qk, generator=rng, device=device)
             keep_idx = perm[:target_keep]
+
+            # keep a fraction of entries at random
+            fallback_n = max(1, int(math.ceil(random_fallback_frac * N_qk)))
+            keep_idx = perm[:fallback_n]
+
             alive_mask = torch.zeros(N_qk, dtype=torch.bool, device=device)
             alive_mask[keep_idx] = True
 
@@ -376,6 +381,9 @@ def calibrate_mask_layerwise_qk(
                 current_scores = all_scores[alive_indices]
 
                 topk_vals, topk_idxs = torch.topk(current_scores, keep_n, largest=True)
+
+                topk_vals, topk_idxs = torch.topk(current_scores, keep_n, largest=False)
+
                 tau = topk_vals.min()
 
                 # keep entries with score ≥ tau
