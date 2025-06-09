@@ -39,8 +39,11 @@ def get_test_loader(batch_size):
     return DataLoader(test_data, batch_size=batch_size, shuffle=False)
 
 
-def split_iid(dataset, num_clients):
+def split_iid(dataset, num_clients, seed=42):
     """IID sharding: randomly assign equal data to each client."""
+    random.seed(seed)
+    np.random.seed(seed)
+
     num_items = len(dataset) // num_clients
     all_indices = np.random.permutation(len(dataset))
     splits = []
@@ -70,6 +73,7 @@ def split_noniid(dataset, num_clients, nc=2, seed=42):
         List[Subset(dataset)] of length num_clients
     """
     random.seed(seed)
+    np.random.seed(seed)
 
     # Group all indices by their class label
     class_indices = defaultdict(list)
