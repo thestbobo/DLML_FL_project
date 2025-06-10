@@ -122,7 +122,7 @@ def main():
         print("No valid checkpoint found; starting from scratch.")
 
     # data prep
-    client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.seed)
+    client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.NC, config.seed)
     test_loader = get_test_loader(batch_size=config.BATCH_SIZE)
 
     # talos branch
