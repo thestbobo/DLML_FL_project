@@ -187,6 +187,7 @@ def main():
                 dummy,
                 fisher_scores,
                 keep_ratio_per_block=keep_ratio,
+                target_sparsity=config.TALOS_TARGET_SPARSITY,
                 max_rounds=R
             )
 
