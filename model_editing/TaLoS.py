@@ -29,7 +29,7 @@ def compute_fisher_scores(model, dataloader, criterion, device):
 
     return fisher_scores
 
-
+# this is used in centralized
 def calibrate_mask(fisher_scores, target_sparsity, rounds):
     """
     Calibrate binary masks over multiple 'rounds' to reach target_sparsity.
@@ -76,7 +76,7 @@ def calibrate_mask(fisher_scores, target_sparsity, rounds):
 
     return masks
 
-
+# this was used in centralized, replaced with calibrate_mask
 # one-shot pruning (fixed threshold) -> not used right now, it's noisy
 def calibrate_mask_one_shot(model, fisher_scores, target_sparsity, rounds):
     masks = {name: torch.ones_like(param) for name, param in model.named_parameters() if param.requires_grad}
@@ -97,7 +97,7 @@ def calibrate_mask_one_shot(model, fisher_scores, target_sparsity, rounds):
 
     return masks
 
-
+# federated model, calibrates mask layerwise, priuning only Q/K layers untill reaching targert_qk_sparsity -> 90% QK pruned = 60% global weights pruned
 def calibrate_mask_layerwise_qk(
     model,
     fisher_scores: dict,
@@ -217,10 +217,59 @@ def calibrate_mask_layerwise_qk(
     return masks
 
 
+# implemented for federated setting, globally prunes all parameters, this method is not as strategic as the QK, but allows us to prune more weights than QK
+def calibrate_mask_global(
+    fisher_scores: dict,
+    target_sparsity: float,
+    random_fallback_frac: float = 0.1,
+    seed: int = 0,
+):
+    """
+    Globally prune parameters based on Fisher sensitivity scores.
 
+    Args:
+        fisher_scores (dict): mapping from parameter name to sensitivity tensor at init.
+        target_sparsity (float): fraction of parameters to prune (0.0 = keep all, 1.0 = prune all).
+        random_fallback_frac (float): fraction to keep if all scores are zero.
+        seed (int): random seed for fallback.
 
+    Returns:
+        masks (dict): mapping from param name to mask tensor of same shape (1=keep, 0=prune).
+    """
+    # Collect all scores flatten
+    score_list = []
+    for name, score in fisher_scores.items():
+        score_list.append(score.reshape(-1))
+    if not score_list:
+        return {}
+    all_scores = torch.cat(score_list, dim=0)
+    N = all_scores.numel()
+    keep_n = max(1, math.ceil((1.0 - target_sparsity) * N))
 
-def calibrate_mask_layerwise_qk_old(
+    # Handle zero scores fallback
+    if all_scores.max().item() == 0.0:
+        rng = torch.Generator().manual_seed(seed)
+        idx = torch.randperm(N, generator=rng)[:keep_n]
+        alive = torch.zeros(N, dtype=torch.bool, device=all_scores.device)
+        alive[idx] = True
+    else:
+        # find threshold
+        vals, idxs = torch.topk(all_scores, keep_n, largest=True)
+        tau = vals.min()
+        alive = all_scores >= tau
+
+    # build masks per param
+    masks = {}
+    ptr = 0
+    for name, score in fisher_scores.items():
+        numel = score.numel()
+        flat_mask = alive[ptr:ptr+numel].float()
+        masks[name] = flat_mask.view_as(score)
+        ptr += numel
+    return masks
+
+# this one should work the same as qk but prunes the least sensitive weights instead
+def calibrate_mask_layerwise_qk_ls(
     model,
     fisher_scores: dict,
     keep_ratio_per_block: float = 0.10,
