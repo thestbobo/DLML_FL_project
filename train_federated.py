@@ -6,7 +6,7 @@ import yaml
 import wandb
 from torch.utils.data import DataLoader, ConcatDataset, Subset
 import re
-from model_editing.TaLoS import compute_fisher_scores, calibrate_mask, calibrate_mask_layerwise_qk
+from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_global, calibrate_mask_layerwise_qk
 from models.dino_ViT_b16 import DINO_ViT
 from fl_core.client import local_train, local_train_talos
 from fl_core.server import average_weights_fedavg

@@ -260,6 +260,9 @@ def calibrate_mask_global(
                 or name.startswith("model.cls_token")
                 or ".norm" in name
                 or name.startswith("head")
+                or ".attn.proj" in name
+                or ".mlp.fc1" in name
+                or ".mlp.fc2" in name
         )
 
     # final number to keep
@@ -346,6 +349,12 @@ def calibrate_mask_global(
     for name, sz in param_shapes:
         masks[name] = alive[ptr:ptr + sz].float().view_as(dict(model.named_parameters())[name])
         ptr += sz
+
+    print("[MASK DIAG ]")
+    for name, m in masks.items():
+        keep_pct = 100 * m.sum().item() / m.numel()
+        if any(pat in name for pat in ["attn.qkv", "attn.proj", "mlp"]):
+            print(f"{name:50s} → {keep_pct:5.1f}% kept")
 
     return masks
 
