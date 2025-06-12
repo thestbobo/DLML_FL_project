@@ -219,105 +219,134 @@ def calibrate_mask_layerwise_qk(
 
 # implemented for federated setting, globally prunes all parameters, this method is not as strategic as the QK, but allows us to prune more weights than QK
 def calibrate_mask_global(
-    fisher_scores: dict,
-    target_sparsity: float,
-    rounds: int = 5,
-    random_fallback_frac: float = 0.1,
-    seed: int = 42,
+        model: torch.nn.Module,
+        calib_loader,
+        criterion,
+        device: torch.device,
+        target_sparsity: float,
+        rounds: int = 4,
+        random_fallback_frac: float = 0.1,
+        seed: int = 42,
 ):
     """
-    Multi-round global prune that *keeps* the lowest-sensitivity parameters
-    (i.e., smallest Fisher scores) and prunes the highest-sensitivity ones.
+    Dynamic multi‐round global prune that:
+      - recomputes Fisher on the masked model each round
+      - keeps the *least‐sensitive* weights globally
+      - whitelists critical layers so they never die
 
     Args:
-        fisher_scores (dict): map from param name to sensitivity tensor (init).
-        target_sparsity (float): fraction of params to prune (0.0 keep all, 1.0 prune all).
-        rounds (int): number of iterative pruning rounds.
-        random_fallback_frac (float): fallback keep fraction if all scores zero in a round.
-        seed (int): RNG seed for deterministic fallback.
-
+        model:          the nn.Module to prune (will be masked in‐place)
+        calib_loader:   DataLoader for mask‐calibration (TaLoS’s calib split)
+        criterion:      loss for Fisher (e.g. CrossEntropy)
+        device:         torch.device (cuda or cpu)
+        target_sparsity: fraction to prune (0.9 → prune 90%)
+        rounds:         number of outer mask‐calibration rounds (TaLoS uses 4)
+        random_fallback_frac: if fisher scores all zero in a round, randomly keep this fraction
+        seed:           rng seed
     Returns:
-        masks (dict): map from param name to {0,1}-mask tensor (1=keep, 0=prune).
+        masks (dict): name → FloatTensor mask (1=keep, 0=prune)
     """
-    # Flatten & concatenate all scores
-    flat_list = [v.reshape(-1) for v in fisher_scores.values()]
-    if not flat_list:
-        print(f"[CALIB] No fisher scores provided.")
-        return {}
-    all_scores = torch.cat(flat_list, dim=0)
-    device = all_scores.device
-    N = all_scores.numel()
-    final_keep = max(1, math.ceil((1.0 - target_sparsity) * N))
-
-    print(f"[CALIB] target_sparsity={target_sparsity:.3f}, total_params={N}, final_keep={final_keep} ({final_keep/N*100:.2f}% kept)")
-
-    # Initialize alive mask
+    # 1) Build initial flat mask (all alive) and count total params
+    param_shapes = []
+    for n, p in model.named_parameters():
+        param_shapes.append((n, p.numel()))
+    N = sum(sz for _, sz in param_shapes)
     alive = torch.ones(N, dtype=torch.bool, device=device)
 
-    # Iterative prune rounds
-    for r in range(1, rounds + 1):
+    def is_whitelisted(name):
+        return (
+                name.startswith("model.patch_embed")
+                or name.startswith("model.pos_embed")
+                or name.startswith("model.cls_token")
+                or ".norm" in name
+                or name.startswith("head")
+        )
+
+    # final number to keep
+    final_keep = max(1, math.ceil((1.0 - target_sparsity) * N))
+
+    # 2) Outer rounds
+    for r in range(rounds):
+        # A) apply current mask to model weights
+        ptr = 0
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                cnt = param.numel()
+                param.data.mul_(alive[ptr:ptr + cnt].float().view_as(param).to(param.device))
+                ptr += cnt
+
+        # B) recompute Fisher on the masked model
+        fisher = compute_fisher_scores(model, calib_loader, criterion, device)
+        # zero‐out scores of already‐dead weights, so they never revive
+        ptr = 0
+        for name, p in model.named_parameters():
+            cnt = p.numel()
+            if name in fisher:
+                fs = fisher[name].reshape(-1)
+                fs = fs * alive[ptr:ptr + cnt].float().to(fs.device)
+                fisher[name] = fs.view_as(fisher[name])
+            ptr += cnt
+
+        # C) global ranking among alive
+        flats = [fisher[n].reshape(-1) for n, _ in param_shapes]
+        all_scores = torch.cat(flats, dim=0)
         idxs = alive.nonzero(as_tuple=False).view(-1)
         cnt = idxs.numel()
-        if cnt <= final_keep:
-            print(f"[CALIB][Round {r}] cnt <= final_keep ({cnt} <= {final_keep}), breaking")
-            break
+        # geometric keep fraction this round
+        keep_r = max(1, math.ceil((1.0 - target_sparsity) ** ((r + 1) / rounds) * cnt))
 
-        # Geometric schedule: fraction to keep this round among alive
-        keep_r = max(1, math.ceil((1.0 - target_sparsity) ** (r / rounds) * cnt))
-        sub_scores = all_scores[idxs]
-
-        # Fallback if no signal
-        if sub_scores.max().item() == 0.0:
+        sub = all_scores[idxs]
+        if sub.max().item() == 0.0:
+            # random fallback
             rng = torch.Generator(device=device).manual_seed(seed + r)
             perm = torch.randperm(cnt, generator=rng, device=device)
             keep_rb = max(1, math.ceil(random_fallback_frac * cnt))
             sel = idxs[perm[:keep_rb]]
-            new_alive = torch.zeros(N, dtype=torch.bool, device=device)
+            new_alive = torch.zeros_like(alive)
             new_alive[sel] = True
             alive = new_alive
-            print(f"[CALIB][Round {r}] zero scores, random fallback keep {keep_rb}/{cnt}")
         else:
-            # Keep the smallest keep_r scores among alive
-            small_vals, small_idx = torch.topk(sub_scores, keep_r, largest=False)
+            # keep the smallest keep_r scores
+            small_vals, _ = torch.topk(sub, keep_r, largest=False)
             tau = small_vals.max()
-            # Build new alive: only idxs with score <= tau
-            mask_sub = sub_scores <= tau
-            new_alive = torch.zeros_like(alive)
-            new_alive[idxs[mask_sub]] = True
-            alive = new_alive
-            kept = alive.sum().item()
-            print(f"[CALIB][Round {r}] after prune: kept {kept}/{N} ({kept/N*100:.2f}% )")
+            alive = alive & (all_scores <= tau)
 
-    # Final exact adjust
+        # D) re‐whitelist critical layers (force alive)
+        ptr = 0
+        for name, sz in param_shapes:
+            if is_whitelisted(name):
+                alive[ptr:ptr + sz] = True
+            ptr += sz
+
+    # 3) final exact adjust to hit final_keep
     alive_idxs = alive.nonzero(as_tuple=False).view(-1)
-    curr_keep = alive_idxs.numel()
-    if curr_keep > final_keep:
-        # drop highest scores among alive
-        alive_scores = all_scores[alive_idxs]
-        drop_n = curr_keep - final_keep
-        _, drop_idx = torch.topk(alive_scores, drop_n, largest=True)
-        drop_global = alive_idxs[drop_idx]
-        alive[drop_global] = False
-        print(f"[CALIB] Final adjust: dropped {drop_n}, new_keep={alive.sum().item()}")
-    elif curr_keep < final_keep:
-        # add back lowest scores among dropped
+    curr = alive_idxs.numel()
+    if curr > final_keep:
+        # drop highest-scoring among alive
+        scores = all_scores[alive_idxs]
+        _, drop_pos = torch.topk(scores, curr - final_keep, largest=True)
+        alive[alive_idxs[drop_pos]] = False
+    elif curr < final_keep:
         dropped = (~alive).nonzero(as_tuple=False).view(-1)
-        need = final_keep - curr_keep
-        dropped_scores = all_scores[dropped]
-        _, add_idx = torch.topk(dropped_scores, need, largest=False)
-        add_global = dropped[add_idx]
-        alive[add_global] = True
-        print(f"[CALIB] Final adjust: added back {need}, new_keep={alive.sum().item()}")
+        need = final_keep - curr
+        scores = all_scores[dropped]
+        _, add_pos = torch.topk(scores, need, largest=False)
+        alive[dropped[add_pos]] = True
 
-    # Scatter mask back per-parameter
+    # re‐whitelist once more
+    ptr = 0
+    for name, sz in param_shapes:
+        if is_whitelisted(name):
+            alive[ptr:ptr + sz] = True
+        ptr += sz
+
+    # 4) scatter into per‐param masks and return
     masks = {}
     ptr = 0
-    for name, score in fisher_scores.items():
-        cnt = score.numel()
-        masks[name] = alive[ptr:ptr+cnt].float().view_as(score)
-        ptr += cnt
+    for name, sz in param_shapes:
+        masks[name] = alive[ptr:ptr + sz].float().view_as(dict(model.named_parameters())[name])
+        ptr += sz
 
-    print(f"[CALIB] Completed: final_keep={alive.sum().item()} of {N} ({alive.sum().item()/N*100:.2f}% )")
     return masks
 
 

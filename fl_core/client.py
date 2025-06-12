@@ -295,7 +295,7 @@ def local_train_talos(
                 model,
                 fisher_scores,
                 keep_ratio_per_block=keep_ratio,
-                rounds=prune_rounds
+                max_rounds=prune_rounds
             )
             torch.save(masks, mask_path)
 

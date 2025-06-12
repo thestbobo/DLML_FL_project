@@ -174,15 +174,7 @@ def main():
             R = config.TALOS_PRUNE_ROUNDS
             keep_ratio = 1.0 - config.TALOS_TARGET_SPARSITY
 
-            # ----- other way of computing mask -----
-            # shared_masks = calibrate_mask(
-            #     fisher_scores,
-            #     target_sparsity=config.TALOS_TARGET_SPARSITY,
-            #     rounds=R
-            # )
-            # ---------------------------------------
-
-            # Build a layer‐wise Q/K float mask (10 % keep)
+            # Build a layer‐wise Q/K float mask
             shared_masks = calibrate_mask_layerwise_qk(
                 dummy,
                 fisher_scores,
