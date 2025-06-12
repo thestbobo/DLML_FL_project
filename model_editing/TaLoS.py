@@ -218,55 +218,96 @@ def calibrate_mask_layerwise_qk(
 
 
 # implemented for federated setting, globally prunes all parameters, this method is not as strategic as the QK, but allows us to prune more weights than QK
+
 def calibrate_mask_global(
     fisher_scores: dict,
     target_sparsity: float,
+    rounds: int = 5,
     random_fallback_frac: float = 0.1,
     seed: int = 0,
 ):
     """
-    Globally prune parameters based on Fisher sensitivity scores.
+    Multi-round global prune that *keeps* the lowest-sensitivity parameters
+    (i.e., the smallest Fisher scores) and prunes the highest-sensitivity ones.
 
     Args:
-        fisher_scores (dict): mapping from parameter name to sensitivity tensor at init.
+        fisher_scores (dict): mapping from parameter name to sensitivity tensor (at init).
         target_sparsity (float): fraction of parameters to prune (0.0 = keep all, 1.0 = prune all).
-        random_fallback_frac (float): fraction to keep if all scores are zero.
-        seed (int): random seed for fallback.
+        rounds (int): number of iterative pruning rounds.
+        random_fallback_frac (float): fallback keep fraction if scores are all zero in a round.
+        seed (int): RNG seed for deterministic randomness in fallback.
 
     Returns:
-        masks (dict): mapping from param name to mask tensor of same shape (1=keep, 0=prune).
+        masks (dict): mapping from parameter name to mask tensor of the same shape (1=keep, 0=prune).
     """
-    # Collect all scores flatten
-    score_list = []
-    for name, score in fisher_scores.items():
-        score_list.append(score.reshape(-1))
-    if not score_list:
+    # 1) Flatten & concatenate all sensitivity scores
+    flat_list = [v.reshape(-1) for v in fisher_scores.values()]
+    if not flat_list:
         return {}
-    all_scores = torch.cat(score_list, dim=0)
+    all_scores = torch.cat(flat_list, dim=0)
+    device = all_scores.device
     N = all_scores.numel()
-    keep_n = max(1, math.ceil((1.0 - target_sparsity) * N))
+    final_keep = max(1, math.ceil((1.0 - target_sparsity) * N))
 
-    # Handle zero scores fallback
-    if all_scores.max().item() == 0.0:
-        rng = torch.Generator().manual_seed(seed)
-        idx = torch.randperm(N, generator=rng)[:keep_n]
-        alive = torch.zeros(N, dtype=torch.bool, device=all_scores.device)
-        alive[idx] = True
-    else:
-        # find threshold
-        vals, idxs = torch.topk(all_scores, keep_n, largest=True)
-        tau = vals.min()
-        alive = all_scores >= tau
+    # 2) Initialize alive mask (all True)
+    alive = torch.ones(N, dtype=torch.bool, device=device)
 
-    # build masks per param
+    # 3) Iterative pruning rounds
+    for r in range(1, rounds + 1):
+        idxs = alive.nonzero(as_tuple=False).view(-1)
+        cnt = idxs.numel()
+        if cnt <= final_keep:
+            break
+
+        # Geometric keep schedule
+        kappa = (1.0 - target_sparsity) ** (r / float(rounds))
+        keep_r = max(1, math.ceil(kappa * cnt))
+        sub_scores = all_scores[idxs]
+
+        # Fallback if all zero
+        if sub_scores.max().item() == 0.0:
+            rng = torch.Generator(device=device).manual_seed(seed)
+            perm = torch.randperm(cnt, generator=rng, device=device)
+            num_fallback = max(1, math.ceil(random_fallback_frac * cnt))
+            sel = idxs[perm[:num_fallback]]
+            new_alive = torch.zeros(N, dtype=torch.bool, device=device)
+            new_alive[sel] = True
+            alive = new_alive
+        else:
+            # Keep the keep_r *smallest* scores (lowest sensitivities)
+            small_vals, _ = torch.topk(sub_scores, keep_r, largest=False)
+            tau = small_vals.max()
+            # Keep indices whose score <= tau
+            alive = alive & (all_scores <= tau)
+
+    # 4) Final adjust to exactly final_keep
+    alive_idxs = alive.nonzero(as_tuple=False).view(-1)
+    if alive_idxs.numel() > final_keep:
+        # Drop the highest-sensitivity among the alive to match count
+        alive_scores = all_scores[alive_idxs]
+        drop_n = alive_idxs.numel() - final_keep
+        _, drop_pos = torch.topk(alive_scores, drop_n, largest=True)
+        drop_global = alive_idxs[drop_pos]
+        alive[drop_global] = False
+    elif alive_idxs.numel() < final_keep:
+        # Add back the least-sensitive among the dropped to match count
+        dropped = (~alive).nonzero(as_tuple=False).view(-1)
+        need = final_keep - alive_idxs.numel()
+        dropped_scores = all_scores[dropped]
+        _, add_pos = torch.topk(dropped_scores, need, largest=False)
+        add_global = dropped[add_pos]
+        alive[add_global] = True
+
+    # 5) Scatter the final global mask back into per-parameter shapes
     masks = {}
     ptr = 0
     for name, score in fisher_scores.items():
-        numel = score.numel()
-        flat_mask = alive[ptr:ptr+numel].float()
-        masks[name] = flat_mask.view_as(score)
-        ptr += numel
+        cnt = score.numel()
+        masks[name] = alive[ptr : ptr + cnt].float().view_as(score)
+        ptr += cnt
+
     return masks
+
 
 # this one should work the same as qk but prunes the least sensitive weights instead
 def calibrate_mask_layerwise_qk_ls(
