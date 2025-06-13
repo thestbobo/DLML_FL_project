@@ -219,142 +219,147 @@ def calibrate_mask_layerwise_qk(
 
 # implemented for federated setting, globally prunes all parameters, this method is not as strategic as the QK, but allows us to prune more weights than QK
 def calibrate_mask_global(
-        model: torch.nn.Module,
-        calib_loader,
-        criterion,
-        device: torch.device,
-        target_sparsity: float,
-        rounds: int = 4,
-        random_fallback_frac: float = 0.1,
-        seed: int = 42,
+    model: torch.nn.Module,
+    calib_loader,
+    criterion,
+    device: torch.device,
+    target_sparsity: float,
+    rounds: int = 4,
+    random_fallback_frac: float = 0.1,
+    seed: int = 42,
 ):
     """
-    Dynamic multi‐round global prune that:
-      - recomputes Fisher on the masked model each round
-      - keeps the *least‐sensitive* weights globally
-      - whitelists critical layers so they never die
+    Dynamic multi-round global prune that:
+      - Recomputes Fisher on the masked model each round
+      - Keeps the least-sensitive weights globally based on geometric schedule
+      - Soft-masks pruned weights at 0.1 (not zero) to preserve gradient flow
+      - Whitelists critical layers so they never die
+      - Ensures final global sparsity and per-parameter minimal keep
 
     Args:
-        model:          the nn.Module to prune (will be masked in‐place)
-        calib_loader:   DataLoader for mask‐calibration (TaLoS’s calib split)
-        criterion:      loss for Fisher (e.g. CrossEntropy)
-        device:         torch.device (cuda or cpu)
-        target_sparsity: fraction to prune (0.9 → prune 90%)
-        rounds:         number of outer mask‐calibration rounds (TaLoS uses 4)
-        random_fallback_frac: if fisher scores all zero in a round, randomly keep this fraction
-        seed:           rng seed
+        model:            the nn.Module to prune (will be masked in-place)
+        calib_loader:     DataLoader for mask-calibration
+        criterion:        loss function for Fisher (e.g. CrossEntropy)
+        device:           torch.device
+        target_sparsity:  fraction to prune (0.9 -> prune 90%)
+        rounds:           number of outer mask-calibration rounds (TaLoS uses 4)
+        random_fallback_frac: if fisher scores all zero, randomly keep this fraction
+        seed:             RNG seed
+
     Returns:
-        masks (dict): name → FloatTensor mask (1=keep, 0=prune)
+        masks (dict): name -> FloatTensor mask (1.0=keep, 0.1=pruned)
     """
-    # 1) Build initial flat mask (all alive) and count total params
-    param_shapes = []
-    for n, p in model.named_parameters():
-        param_shapes.append((n, p.numel()))
+    # Gather parameter shapes
+    param_shapes = [(n, p.numel()) for n, p in model.named_parameters()]
     N = sum(sz for _, sz in param_shapes)
+    # Alive boolean mask (1=to keep at full scale, 0=prune)
     alive = torch.ones(N, dtype=torch.bool, device=device)
+
+    # Final keep count
+    final_keep = max(1, math.ceil((1.0 - target_sparsity) * N))
 
     def is_whitelisted(name):
         return (
-                name.startswith("model.patch_embed")
-                or name.startswith("model.pos_embed")
-                or name.startswith("model.cls_token")
-                or ".norm" in name
-                or name.startswith("head")
-                or ".attn.proj" in name
-                or ".mlp.fc1" in name
-                or ".mlp.fc2" in name
+            name.startswith("model.patch_embed")
+            or name.startswith("model.pos_embed")
+            or name.startswith("model.cls_token")
+            or ".norm" in name
+            or name.startswith("head")
         )
 
-    # final number to keep
-    final_keep = max(1, math.ceil((1.0 - target_sparsity) * N))
-
-    # 2) Outer rounds
+    # Multi-round mask calibration
     for r in range(rounds):
-        # A) apply current mask to model weights
+        # 1) Apply current mask (soft: 1.0 or 0.1) to weights
         ptr = 0
         with torch.no_grad():
             for name, param in model.named_parameters():
                 cnt = param.numel()
-                param.data.mul_(alive[ptr:ptr + cnt].float().view_as(param).to(param.device))
+                # build soft mask from alive bool
+                segment = alive[ptr:ptr+cnt].float().to(device)
+                soft = segment + (1.0 - segment) * 0.1
+                param.data.mul_(soft.view_as(param).to(param.device))
                 ptr += cnt
 
-        # B) recompute Fisher on the masked model
+        # 2) Recompute Fisher on masked model
         fisher = compute_fisher_scores(model, calib_loader, criterion, device)
-        # zero‐out scores of already‐dead weights, so they never revive
+        # Zero out scores of dead entries
         ptr = 0
         for name, p in model.named_parameters():
             cnt = p.numel()
             if name in fisher:
                 fs = fisher[name].reshape(-1)
-                fs = fs * alive[ptr:ptr + cnt].float().to(fs.device)
+                fs = fs * alive[ptr:ptr+cnt].float().to(fs.device)
                 fisher[name] = fs.view_as(fisher[name])
             ptr += cnt
 
-        # C) global ranking among alive
+        # 3) Global ranking among alive
         flats = [fisher[n].reshape(-1) for n, _ in param_shapes]
         all_scores = torch.cat(flats, dim=0)
         idxs = alive.nonzero(as_tuple=False).view(-1)
-        cnt = idxs.numel()
-        # geometric keep fraction this round
-        keep_r = max(1, math.ceil((1.0 - target_sparsity) ** ((r + 1) / rounds) * cnt))
+        cnt_alive = idxs.numel()
+        # Geometric keep schedule this round
+        keep_r = max(1, math.ceil((1.0 - target_sparsity) ** ((r+1)/rounds) * cnt_alive))
+        sub_scores = all_scores[idxs]
 
-        sub = all_scores[idxs]
-        if sub.max().item() == 0.0:
-            # random fallback
+        if sub_scores.max().item() == 0.0:
+            # random fallback among alive
             rng = torch.Generator(device=device).manual_seed(seed + r)
-            perm = torch.randperm(cnt, generator=rng, device=device)
-            keep_rb = max(1, math.ceil(random_fallback_frac * cnt))
-            sel = idxs[perm[:keep_rb]]
-            new_alive = torch.zeros_like(alive)
-            new_alive[sel] = True
-            alive = new_alive
+            perm = torch.randperm(cnt_alive, generator=rng, device=device)
+            k_fb = max(1, math.ceil(random_fallback_frac * cnt_alive))
+            alive = torch.zeros_like(alive)
+            alive[idxs[perm[:k_fb]]] = True
         else:
-            # keep the smallest keep_r scores
-            small_vals, _ = torch.topk(sub, keep_r, largest=False)
-            tau = small_vals.max()
-            alive = alive & (all_scores <= tau)
+            # Keep lowest keep_r scores
+            small_vals, _ = torch.topk(sub_scores, keep_r, largest=False)
+            thresh = small_vals.max()
+            alive = alive & (all_scores <= thresh)
 
-        # D) re‐whitelist critical layers (force alive)
+        # 4) Whitelist critical layers (force alive)
         ptr = 0
         for name, sz in param_shapes:
             if is_whitelisted(name):
-                alive[ptr:ptr + sz] = True
+                alive[ptr:ptr+sz] = True
             ptr += sz
 
-    # 3) final exact adjust to hit final_keep
+    # Final adjust to exact final_keep
+    flats = [fisher[n].reshape(-1) for n, _ in param_shapes]
+    all_scores = torch.cat(flats, dim=0)
     alive_idxs = alive.nonzero(as_tuple=False).view(-1)
-    curr = alive_idxs.numel()
-    if curr > final_keep:
-        # drop highest-scoring among alive
-        scores = all_scores[alive_idxs]
-        _, drop_pos = torch.topk(scores, curr - final_keep, largest=True)
-        alive[alive_idxs[drop_pos]] = False
-    elif curr < final_keep:
+    curr_keep = alive_idxs.numel()
+    if curr_keep > final_keep:
+        # drop highest among alive
+        vals = all_scores[alive_idxs]
+        _, drop = torch.topk(vals, curr_keep-final_keep, largest=True)
+        alive[alive_idxs[drop]] = False
+    elif curr_keep < final_keep:
         dropped = (~alive).nonzero(as_tuple=False).view(-1)
-        need = final_keep - curr
-        scores = all_scores[dropped]
-        _, add_pos = torch.topk(scores, need, largest=False)
-        alive[dropped[add_pos]] = True
+        need = final_keep - curr_keep
+        vals = all_scores[dropped]
+        _, keep = torch.topk(vals, need, largest=False)
+        alive[dropped[keep]] = True
 
-    # re‐whitelist once more
+    # Whitelist again
     ptr = 0
     for name, sz in param_shapes:
         if is_whitelisted(name):
-            alive[ptr:ptr + sz] = True
+            alive[ptr:ptr+sz] = True
         ptr += sz
 
-    # 4) scatter into per‐param masks and return
+    # 5) Build final soft masks
     masks = {}
     ptr = 0
     for name, sz in param_shapes:
-        masks[name] = alive[ptr:ptr + sz].float().view_as(dict(model.named_parameters())[name])
+        seg = alive[ptr:ptr+sz].float()
+        soft = seg + (1.0-seg)*0.1
+        masks[name] = soft.view_as(dict(model.named_parameters())[name]).to(device)
         ptr += sz
 
+    # Debug per-layer
     print("[MASK DIAG ]")
     for name, m in masks.items():
-        keep_pct = 100 * m.sum().item() / m.numel()
         if any(pat in name for pat in ["attn.qkv", "attn.proj", "mlp"]):
-            print(f"{name:50s} → {keep_pct:5.1f}% kept")
+            pct = 100*m.sum().item()/m.numel()
+            print(f"{name:50s} → {pct:5.1f}% weighted path")
 
     return masks
 
