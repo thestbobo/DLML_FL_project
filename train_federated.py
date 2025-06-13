@@ -175,12 +175,20 @@ def main():
             keep_ratio = 1.0 - config.TALOS_TARGET_SPARSITY
 
             # Build a layer‐wise Q/K float mask
-            shared_masks = calibrate_mask_layerwise_qk(
-                dummy,
-                fisher_scores,
-                keep_ratio_per_block=keep_ratio,
-                target_qk_sparsity=config.TALOS_TARGET_SPARSITY,
-                max_rounds=R
+            # shared_masks = calibrate_mask_layerwise_qk(
+            #     dummy,
+            #     fisher_scores,
+            #     keep_ratio_per_block=keep_ratio,
+            #     target_qk_sparsity=config.TALOS_TARGET_SPARSITY,
+            #     max_rounds=R
+            # )
+            shared_masks = calibrate_mask_global(
+                model=dummy,
+                calib_loader=calib_loader,
+                criterion=dummy_criterion,
+                device=device,
+                target_sparsity=config.TALOS_TARGET_SPARSITY,
+                rounds=R
             )
 
             torch.save(shared_masks, global_mask_file)
