@@ -220,14 +220,14 @@ def calibrate_mask_layerwise_qk(
 # implemented for federated setting, globally prunes all parameters, this method is not as strategic as the QK, but allows us to prune more weights than QK
 
 def calibrate_mask_global(
-    model: torch.nn.Module,
-    calib_loader,
-    criterion,
-    device: torch.device,
-    target_sparsity: float,
-    rounds: int = 4,
-    random_fallback_frac: float = 0.1,
-    seed: int = 42,
+        model: torch.nn.Module,
+        calib_loader,
+        criterion,
+        device: torch.device,
+        target_sparsity: float,
+        rounds: int = 4,
+        random_fallback_frac: float = 0.1,
+        seed: int = 42,
 ):
     """
     Dynamic multi-round global prune with "soft" mask for calibration:
@@ -250,11 +250,11 @@ def calibrate_mask_global(
     # Helper: critical layers never die
     def is_whitelisted(name: str) -> bool:
         return (
-            name.startswith("model.patch_embed")
-            or name.startswith("model.pos_embed")
-            or name.startswith("model.cls_token")
-            or ".norm" in name
-            or name.startswith("head")
+                name.startswith("model.patch_embed")
+                or name.startswith("model.pos_embed")
+                or name.startswith("model.cls_token")
+                or ".norm" in name
+                or name.startswith("head")
         )
 
     # Desired number to keep
@@ -268,10 +268,11 @@ def calibrate_mask_global(
         with torch.no_grad():
             for name, param in model.named_parameters():
                 cnt = param.numel()
-                seg = alive[ptr:ptr+cnt].float().to(device)
+                seg = alive[ptr:ptr + cnt].float().to(device)
                 soft = seg + (1.0 - seg) * 0.1
-                param.data.copy_(orig[name].view(-1) * soft)
-                param.data = param.data.view_as(param)
+                flat = orig[name].reshape(-1) * soft
+                param.data.copy_(flat.view_as(param.data))
+
                 ptr += cnt
 
         # B) compute Fisher scores on soft-masked model
@@ -282,7 +283,7 @@ def calibrate_mask_global(
             cnt = p.numel()
             if n in fisher:
                 fs = fisher[n].reshape(-1)
-                fs = fs * alive[ptr:ptr+cnt].float().to(fs.device)
+                fs = fs * alive[ptr:ptr + cnt].float().to(fs.device)
                 fisher[n] = fs.view_as(fisher[n])
             ptr += cnt
 
@@ -291,7 +292,7 @@ def calibrate_mask_global(
         all_scores = torch.cat(flats, dim=0)
         idxs = alive.nonzero(as_tuple=False).view(-1)
         cnt_alive = idxs.numel()
-        keep_r = max(1, math.ceil((1.0 - target_sparsity) ** ((r+1)/rounds) * cnt_alive))
+        keep_r = max(1, math.ceil((1.0 - target_sparsity) ** ((r + 1) / rounds) * cnt_alive))
         sub = all_scores[idxs]
         if sub.max().item() == 0.0:
             # fallback random keep
@@ -310,7 +311,7 @@ def calibrate_mask_global(
         ptr = 0
         for name, sz in param_shapes:
             if is_whitelisted(name):
-                alive[ptr:ptr+sz] = True
+                alive[ptr:ptr + sz] = True
             ptr += sz
 
     # 3) final exact adjust to final_keep
@@ -332,14 +333,14 @@ def calibrate_mask_global(
     ptr = 0
     for name, sz in param_shapes:
         if is_whitelisted(name):
-            alive[ptr:ptr+sz] = True
+            alive[ptr:ptr + sz] = True
         ptr += sz
 
     # 4) build binary masks dict
     masks = {}
     ptr = 0
     for name, sz in param_shapes:
-        binary = alive[ptr:ptr+sz].float()
+        binary = alive[ptr:ptr + sz].float()
         masks[name] = binary.view_as(dict(model.named_parameters())[name]).to(device)
         ptr += sz
 
@@ -351,7 +352,6 @@ def calibrate_mask_global(
             print(f"{name:50s} → {pct:5.1f}% kept")
 
     return masks
-
 
 
 # this one should work the same as qk but prunes the least sensitive weights instead
