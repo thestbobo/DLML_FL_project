@@ -227,6 +227,7 @@ def calibrate_mask_global(
         target_sparsity: float,
         rounds: int = 4,
         random_fallback_frac: float = 0.1,
+        eps = 1e-6,
         seed: int = 42,
 ):
     """
@@ -250,11 +251,13 @@ def calibrate_mask_global(
     # Helper: critical layers never die
     def is_whitelisted(name: str) -> bool:
         return (
-                name.startswith("model.patch_embed")
-                or name.startswith("model.pos_embed")
-                or name.startswith("model.cls_token")
-                or ".norm" in name
-                or name.startswith("head")
+            name.startswith("model.pos_embed")
+            or name.startswith("model.cls_token")
+            # name.startswith("model.patch_embed")
+            # or name.startswith("model.pos_embed")
+            # or name.startswith("model.cls_token")
+            # or ".norm" in name
+            # or name.startswith("head")
         )
 
     # Desired number to keep
@@ -269,7 +272,8 @@ def calibrate_mask_global(
             for name, param in model.named_parameters():
                 cnt = param.numel()
                 seg = alive[ptr:ptr + cnt].float().to(device)
-                soft = seg + (1.0 - seg) * 0.1
+                # soft = seg + (1.0 - seg) * 0.1
+                soft = seg + (1.0 - seg) * eps
                 flat = orig[name].reshape(-1) * soft
                 param.data.copy_(flat.view_as(param.data))
 
@@ -295,13 +299,14 @@ def calibrate_mask_global(
         keep_r = max(1, math.ceil((1.0 - target_sparsity) ** ((r + 1) / rounds) * cnt_alive))
         sub = all_scores[idxs]
         if sub.max().item() == 0.0:
-            # fallback random keep
-            rng = torch.Generator(device=device).manual_seed(seed + r)
-            perm = torch.randperm(cnt_alive, generator=rng, device=device)
-            kfb = max(1, math.ceil(random_fallback_frac * cnt_alive))
-            new_alive = torch.zeros_like(alive)
-            new_alive[idxs[perm[:kfb]]] = True
-            alive = new_alive
+            pass
+            # # fallback random keep
+            # rng = torch.Generator(device=device).manual_seed(seed + r)
+            # perm = torch.randperm(cnt_alive, generator=rng, device=device)
+            # kfb = max(1, math.ceil(random_fallback_frac * cnt_alive))
+            # new_alive = torch.zeros_like(alive)
+            # new_alive[idxs[perm[:kfb]]] = True
+            # alive = new_alive
         else:
             vals, _ = torch.topk(sub, keep_r, largest=False)
             thr = vals.max()
