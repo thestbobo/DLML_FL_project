@@ -299,14 +299,13 @@ def calibrate_mask_global(
         keep_r = max(1, math.ceil((1.0 - target_sparsity) ** ((r + 1) / rounds) * cnt_alive))
         sub = all_scores[idxs]
         if sub.max().item() == 0.0:
-            pass
-            # # fallback random keep
-            # rng = torch.Generator(device=device).manual_seed(seed + r)
-            # perm = torch.randperm(cnt_alive, generator=rng, device=device)
-            # kfb = max(1, math.ceil(random_fallback_frac * cnt_alive))
-            # new_alive = torch.zeros_like(alive)
-            # new_alive[idxs[perm[:kfb]]] = True
-            # alive = new_alive
+            # fallback random keep
+            rng = torch.Generator(device=device).manual_seed(seed + r)
+            perm = torch.randperm(cnt_alive, generator=rng, device=device)
+            kfb = max(1, math.ceil(random_fallback_frac * cnt_alive))
+            new_alive = torch.zeros_like(alive)
+            new_alive[idxs[perm[:kfb]]] = True
+            alive = new_alive
         else:
             vals, _ = torch.topk(sub, keep_r, largest=False)
             thr = vals.max()
