@@ -54,7 +54,7 @@ def main():
     with open("config/config.yaml", encoding="utf-8") as f:
         default_config = yaml.safe_load(f)
 
-    wandb.init(project="Federated-DINO-ViT", config=default_config)
+    wandb.init(project="Federated-DINO-ViT", name=default_config.name, config=default_config)
     config = wandb.config
 
     np.random.seed(config.seed)

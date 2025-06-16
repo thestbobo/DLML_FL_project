@@ -3,6 +3,7 @@
 # --------------------------
 
 wandb_project_folder: "CIFAR-100_centralized"         # Name of the project folder in wandb
+name: "global_mask_test_only2"
 seed: 42                                              # Random seed for reproducibility
 
 # --------------------------
