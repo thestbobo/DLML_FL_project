@@ -196,7 +196,7 @@ def main():
             torch.save(shared_masks, global_mask_file)
             del dummy, fisher_scores
             end = time.perf_counter()
-            wandb.config.calibration_runtime_sec = (end-start)/60
+            wandb.config.calibration_runtime_min = (end-start)/60
 
         else:
             # load pre-computed mask
