@@ -62,7 +62,7 @@ OUT_CHECKPOINT_PATH: "/content/drive/MyDrive/DL_project/federated_checkpoints"
 FINETUNE_METHOD: 'talos'           # or "dense"
 
 # talos fine-tuning (federated)
-TALOS_TARGET_SPARSITY: 0.40       # e.g. keep 1-x % of params
+TALOS_TARGET_SPARSITY: 0.90       # e.g. keep 1-x % of params
 TALOS_PRUNE_ROUNDS: 5           # how many mask‐calibration iterations
 CALIBRATION_SPLIT: 0.1              # fraction for Fisher‐calibration (already in place)
 
