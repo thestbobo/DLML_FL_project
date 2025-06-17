@@ -53,7 +53,11 @@ def main():
     with open("config/config.yaml", encoding="utf-8") as f:
         default_config = yaml.safe_load(f)
 
-    wandb.init(project="Federated-DINO-ViT", config=default_config)
+    if default_config["run_id"] != "" or default_config["run_id"] is not None:
+        wandb.init(project="Federated-DINO-ViT", id=default_config["run_id"], config=default_config)
+    else:
+        wandb.init(project="Federated-DINO-ViT", config=default_config)
+
     config = wandb.config
 
     np.random.seed(config.seed)
