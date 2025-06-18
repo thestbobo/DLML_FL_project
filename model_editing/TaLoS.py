@@ -230,53 +230,49 @@ def calibrate_mask_global(
     seed: int = 42,
 ):
     """
-    Dynamic multi-round global prune with "soft" mask for calibration:
-      - Stashes orig weights so no compounding
-      - Rounds of Fisher on soft-masked model (orig*(alive*1 + ~alive*0.1))
-      - Geometric bottom-k pruning among alive each round
-      - WHITELISTS attn.proj & mlp.fc1/2 so they never die
-      - Final exact sparsity + per-param min-keep
-    Returns binary {name:mask} dict (1=keep,0=prune).
+    TaLoS‐style multi‐round global prune:
+      • only whitelists the patch embed, pos/cls tokens, and head
+      • prunes everywhere else (QKV, proj, MLP, LayerNorm…)
+      • geometric bottom‐k keep schedule over R rounds
+      • final exact adjust to hit (1 – target_sparsity)
+      • enforces ≥1 weight per tensor
+    Returns: name→FloatTensor mask (1=keep, 0=prune) for training.
     """
-    # 0) stash originals
+    # stash originals so we never compound
     orig = {n: p.data.clone().to(device) for n, p in model.named_parameters()}
 
-    # 1) flatten index
+    # flatten all param shapes
     shapes = [(n, p.numel()) for n, p in model.named_parameters()]
     N = sum(sz for _, sz in shapes)
     alive = torch.ones(N, dtype=torch.bool, device=device)
+    final_keep = max(1, math.ceil((1.0 - target_sparsity) * N))
 
-    # expanded whitelist: includes proj & MLP
+    # ONLY these get a permanent lifeline
     def is_whitelisted(name: str) -> bool:
         return (
             name.startswith("model.patch_embed")
             or name.startswith("model.pos_embed")
             or name.startswith("model.cls_token")
-            or ".norm" in name
             or name.startswith("head")
-            or ".attn.proj" in name
-            or ".mlp.fc1" in name
-            or ".mlp.fc2" in name
         )
 
-    final_keep = max(1, math.ceil((1.0 - target_sparsity) * N))
     model.to(device)
-
-    # 2) R calibration rounds
+    # R calibration rounds
     for r in range(rounds):
-        # A) soft-mask params = orig*(alive*1 + ~alive*0.1)
+        # 1) apply a SOFT mask to param.data = orig * (alive*1 + (~alive)*0.1)
         ptr = 0
         with torch.no_grad():
             for name, param in model.named_parameters():
                 cnt = param.numel()
                 seg = alive[ptr:ptr+cnt].float().to(device)
-                soft = seg + (1.0 - seg) * 0.1
+                soft = seg + (1 - seg) * 0.1
                 flat = orig[name].reshape(-1) * soft
                 param.data.copy_(flat.view_as(param.data))
                 ptr += cnt
 
-        # B) Fisher on soft-masked net
+        # 2) recompute Fisher (on that softly‐masked model)
         fisher = compute_fisher_scores(model, calib_loader, criterion, device)
+        # zero out already‐dead entries so they can’t come back
         ptr = 0
         for name, p in model.named_parameters():
             cnt = p.numel()
@@ -286,40 +282,41 @@ def calibrate_mask_global(
                 fisher[name] = fs.view_as(fisher[name])
             ptr += cnt
 
-        # C) global bottom-k among alive
+        # 3) bottom‐k among alive
         flats = [fisher[n].reshape(-1) for n, _ in shapes]
         all_scores = torch.cat(flats, dim=0)
         idxs = alive.nonzero(as_tuple=False).view(-1)
         cnt_alive = idxs.numel()
         keep_r = max(1, math.ceil((1.0 - target_sparsity)**((r+1)/rounds) * cnt_alive))
+
         sub = all_scores[idxs]
-        if sub.max().item() == 0:
+        if sub.max().item() == 0.0:
             rng = torch.Generator(device=device).manual_seed(seed+r)
             perm = torch.randperm(cnt_alive, generator=rng, device=device)
-            kfb = max(1, math.ceil(random_fallback_frac*cnt_alive))
+            kfb = max(1, math.ceil(random_fallback_frac * cnt_alive))
             new_alive = torch.zeros_like(alive)
             new_alive[idxs[perm[:kfb]]] = True
             alive = new_alive
         else:
-            vals, _ = torch.topk(sub, keep_r, largest=False)
-            thr = vals.max()
+            small, _ = torch.topk(sub, keep_r, largest=False)
+            thr = small.max()
             alive &= (all_scores <= thr)
 
-        # D) re-whitelist
+        # 4) re‐whitelist essential bits
         ptr = 0
         for name, sz in shapes:
             if is_whitelisted(name):
                 alive[ptr:ptr+sz] = True
             ptr += sz
 
-    # 3) final exact adjust to final_keep
+    # 5) final exact adjust to final_keep (no more re‐whitelist of proj/mlp)
     flats = [fisher[n].reshape(-1) for n, _ in shapes]
     all_scores = torch.cat(flats, dim=0)
     alive_idxs = alive.nonzero(as_tuple=False).view(-1)
     curr = alive_idxs.numel()
     if curr > final_keep:
         vals = all_scores[alive_idxs]
-        _, drop = torch.topk(vals, curr-final_keep, largest=True)
+        _, drop = torch.topk(vals, curr - final_keep, largest=True)
         alive[alive_idxs[drop]] = False
     elif curr < final_keep:
         dropped = (~alive).nonzero(as_tuple=False).view(-1)
@@ -327,32 +324,28 @@ def calibrate_mask_global(
         vals = all_scores[dropped]
         _, keep = torch.topk(vals, need, largest=False)
         alive[dropped[keep]] = True
-    # re-whitelist again
-    ptr = 0
-    for name, sz in shapes:
-        if is_whitelisted(name):
-            alive[ptr:ptr+sz] = True
-        ptr += sz
 
-    # 4) build final binary masks & ensure min-keep per param
+    # 6) per‐tensor minimum keep: at least 1 weight
     masks = {}
     ptr = 0
+    param_map = dict(model.named_parameters())
     for name, sz in shapes:
         binv = alive[ptr:ptr+sz].clone()
         if binv.sum() == 0:
             fs = fisher[name].reshape(-1)
-            idx = torch.argmin(fs)
-            binv[idx] = True
-        masks[name] = binv.view_as(dict(model.named_parameters())[name]).float().to(device)
+            binv[torch.argmin(fs)] = True
+        masks[name] = binv.view_as(param_map[name]).float().to(device)
         ptr += sz
 
-    # DEBUG
+    # quick sanity print
     print("[MASK DIAG]")
     for n, m in masks.items():
-        if any(p in n for p in ["attn.qkv","attn.proj","mlp"]):
-            print(f"{n:50s} → {100*m.sum().item()/m.numel():5.1f}% kept")
+        if any(p in n for p in ["attn.qkv", "attn.proj", "mlp"]):
+            pct = 100 * m.sum().item() / m.numel()
+            print(f"{n:50s} → {pct:5.1f}% kept")
 
     return masks
+
 
 
 
