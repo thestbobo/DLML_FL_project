@@ -230,93 +230,98 @@ def calibrate_mask_global(
     seed: int = 42,
 ):
     """
-    TaLoS‐style multi‐round global prune that only kills Q/K,
-    leaves proj, mlp & norm intact, hits exact target_sparsity,
-    and guarantees ≥1 weight per prunable tensor.
+    Multi‐round global TaLoS calibration, soft‐masking during Fisher rounds
+    but returning a hard 0/1 mask for training.
     """
-    # stash originals
-    orig = {n: p.data.clone().to(device) for n, p in model.named_parameters()}
+    model.to(device)
+    # 0) stash the original weights
+    orig = {
+        name: param.data.clone().cpu()
+        for name, param in model.named_parameters()
+    }
 
-    # flatten shapes
-    shapes = [(n, p.numel()) for n, p in model.named_parameters()]
+    # 1) build flat index of all params
+    shapes = [(name, p.numel()) for name, p in model.named_parameters()]
     N = sum(sz for _, sz in shapes)
     alive = torch.ones(N, dtype=torch.bool, device=device)
-    final_keep = max(1, math.ceil((1.0 - target_sparsity) * N))
 
-    # whitelist everything except Q/K
-    def is_whitelisted(name: str) -> bool:
+    def is_whitelisted(name):
         return (
             name.startswith("model.patch_embed")
             or name.startswith("model.pos_embed")
             or name.startswith("model.cls_token")
-            or name.startswith("head")
             or ".norm" in name
+            or name.startswith("head")
             or ".attn.proj" in name
             or ".mlp.fc1" in name
             or ".mlp.fc2" in name
         )
 
-    model.to(device)
-    for r in range(rounds):
-        # 1) soft‐mask weights = orig * (alive*1 + ~alive*0.1)
+    final_keep = max(1, math.ceil((1 - target_sparsity) * N))
+
+    # 2) TaLoS rounds
+    for r in range(1, rounds + 1):
+        # A) apply soft mask to model from orig
         ptr = 0
         with torch.no_grad():
             for name, param in model.named_parameters():
                 cnt = param.numel()
-                seg = alive[ptr:ptr+cnt].float().to(device)
-                soft = seg + (1 - seg) * 0.1
-                param.data.copy_(orig[name].reshape(-1) * soft
-                                 .view_as(param.data).to(param.device))
+                flat_orig = orig[name].view(-1).to(device)
+                seg = alive[ptr : ptr + cnt].float().to(device)
+                soft = seg + (1.0 - seg) * 0.1
+                new_flat = flat_orig * soft
+                param.data.copy_( new_flat.view_as(param.data) )
                 ptr += cnt
 
-        # 2) fisher on that softly‐masked model
+        # B) compute Fisher on the softly‐masked model
         fisher = compute_fisher_scores(model, calib_loader, criterion, device)
 
-        # zero‐out ONLY the dead, _prunable_ ones (leave whitelist scores intact)
+        # zero out scores of already‐dead
         ptr = 0
-        for name, param in model.named_parameters():
-            cnt = param.numel()
-            if not is_whitelisted(name):
-                fs = fisher[name].reshape(-1)
-                fs *= alive[ptr:ptr+cnt].float().to(fs.device)
+        for name, p in model.named_parameters():
+            cnt = p.numel()
+            if name in fisher:
+                fs = fisher[name].view(-1).to(device)
+                fs *= alive[ptr : ptr + cnt].float().to(device)
                 fisher[name] = fs.view_as(fisher[name])
             ptr += cnt
 
-        # 3) global bottom‐k among alive
-        flats = [fisher[n].reshape(-1) for n, _ in shapes]
-        all_scores = torch.cat(flats, dim=0)
+        # C) bottom-k global prune among alive
+        all_scores = torch.cat([fisher[n].view(-1) for n, _ in shapes], dim=0).to(device)
         idxs = alive.nonzero(as_tuple=False).view(-1)
         cnt_alive = idxs.numel()
-        keep_r = max(1, math.ceil((1-target_sparsity)**((r+1)/rounds) * cnt_alive))
+        # geometric schedule
+        keep_r = max(
+            1,
+            math.ceil((1 - target_sparsity) ** (r / rounds) * cnt_alive)
+        )
         sub = all_scores[idxs]
-
         if sub.max().item() == 0.0:
-            rng = torch.Generator(device=device).manual_seed(seed+r)
+            rng = torch.Generator(device=device).manual_seed(seed + r)
             perm = torch.randperm(cnt_alive, generator=rng, device=device)
             keep_fb = max(1, math.ceil(random_fallback_frac * cnt_alive))
             new_alive = torch.zeros_like(alive)
             new_alive[idxs[perm[:keep_fb]]] = True
             alive = new_alive
         else:
-            small, _ = torch.topk(sub, keep_r, largest=False)
-            thr = small.max()
+            vals, _ = torch.topk(sub, keep_r, largest=False)
+            thr = vals.max()
             alive &= (all_scores <= thr)
 
-        # 4) re‐whitelist fully
+        # D) re-whitelist critical layers
         ptr = 0
         for name, sz in shapes:
             if is_whitelisted(name):
-                alive[ptr:ptr+sz] = True
+                alive[ptr : ptr + sz] = True
             ptr += sz
 
-    # 5) final exact adjust (no more re-whitelist of proj/mlp)
-    flats = [fisher[n].reshape(-1) for n, _ in shapes]
-    all_scores = torch.cat(flats, dim=0)
+    # 3) final adjust to exactly final_keep
+    all_scores = torch.cat([fisher[n].view(-1) for n, _ in shapes], dim=0).to(device)
     alive_idxs = alive.nonzero(as_tuple=False).view(-1)
     curr = alive_idxs.numel()
     if curr > final_keep:
         vals = all_scores[alive_idxs]
-        _, drop = torch.topk(vals, curr-final_keep, largest=True)
+        _, drop = torch.topk(vals, curr - final_keep, largest=True)
         alive[alive_idxs[drop]] = False
     elif curr < final_keep:
         dropped = (~alive).nonzero(as_tuple=False).view(-1)
@@ -325,26 +330,31 @@ def calibrate_mask_global(
         _, keep = torch.topk(vals, need, largest=False)
         alive[dropped[keep]] = True
 
-    # 6) per‐tensor ≥1‐weight safety for **prunable** ones
-    masks = {}
+    # one last whitelist pass
     ptr = 0
-    param_map = dict(model.named_parameters())
     for name, sz in shapes:
-        seg = alive[ptr:ptr+sz].clone()
-        if not is_whitelisted(name) and seg.sum() == 0:
-            fs = fisher[name].reshape(-1)
-            seg[torch.argmin(fs)] = True
-        masks[name] = seg.view_as(param_map[name]).float().to(device)
+        if is_whitelisted(name):
+            alive[ptr : ptr + sz] = True
         ptr += sz
 
-    # diagnostic
+    # 4) build HARD 0/1 masks for training
+    masks = {}
+    ptr = 0
+    params = dict(model.named_parameters())
+    for name, sz in shapes:
+        bin_mask = alive[ptr : ptr + sz].float().to(device)
+        masks[name] = bin_mask.view_as(params[name])
+        ptr += sz
+
+    # debug print
     print("[MASK DIAG]")
-    for n, m in masks.items():
-        if any(p in n for p in ["attn.qkv", "attn.proj", "mlp"]):
+    for name, m in masks.items():
+        if any(p in name for p in ("attn.qkv", "attn.proj", "mlp")):
             pct = 100 * m.sum().item() / m.numel()
-            print(f"{n:50s} → {pct:5.1f}% kept")
+            print(f"{name:50s} → {pct:5.1f}% kept")
 
     return masks
+
 
 
 
