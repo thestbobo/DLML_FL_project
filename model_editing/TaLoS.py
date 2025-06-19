@@ -311,7 +311,7 @@ def calibrate_mask_talos(
             sensitive = (fisher[n] >= thresh) & alive
             # ensure we don't over-freeze a layer
             max_freeze = alive.sum() - int(min_layer_keep * m.numel())
-            if sensitive.sum() > max_freeze:
+            if max_freeze > 0 and alive.sum() > 0 and sensitive.sum() > max_freeze:
                 # pick the top max_freeze most-sensitive
                 vals = fisher[n][alive].view(-1)
                 topk_vals, _ = torch.topk(vals, max_freeze, largest=True)
