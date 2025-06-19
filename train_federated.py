@@ -1,5 +1,6 @@
 import os
 import copy
+import time
 import numpy as np
 import torch
 import yaml
@@ -54,9 +55,9 @@ def main():
         default_config = yaml.safe_load(f)
 
     if default_config["run_id"] != "" and default_config["run_id"] is not None:
-        wandb.init(project="Federated-DINO-ViT", id=default_config["run_id"], config=default_config)
+        wandb.init(project="Federated-DINO-ViT", name=default_config["name"], id=default_config["run_id"], config=default_config)
     else:
-        wandb.init(project="Federated-DINO-ViT", config=default_config)
+        wandb.init(project="Federated-DINO-ViT", name=default_config["name"], config=default_config)
 
     config = wandb.config
 
@@ -147,6 +148,7 @@ def main():
 
         print("\n>>> Preparing shared Fisher + mask (TaLoS) …")
         if need_to_compute_mask:
+            start = time.perf_counter()
             # Compute Fisher scores on the entire dataset
             dummy = copy.deepcopy(global_model).to(device)
             dummy_criterion = torch.nn.CrossEntropyLoss()
@@ -197,6 +199,8 @@ def main():
 
             torch.save(shared_masks, global_mask_file)
             del dummy, fisher_scores
+            end = time.perf_counter()
+            wandb.config.calibration_runtime_sec = (end-start)/60
 
         else:
             # load pre-computed mask

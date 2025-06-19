@@ -4,6 +4,7 @@
 
 wandb_project_folder: "CIFAR-100_centralized"         # Name of the project folder in wandb
 run_id: ""
+name: "global_mask_fix_acc&loss"
 seed: 42                                              # Random seed for reproducibility
 
 # --------------------------
@@ -59,10 +60,10 @@ IID: False  # Set to False for non-iid
 NC: 50  # Number of classes per client in non-iid setting
 CHECKPOINT_PATH: '/content/drive/MyDrive/DL_project/federated_checkpoints/fl_model_round_60.pth' # '/content/drive/MyDrive/DL_project/federated_checkpoints/fl_model_round_25.pth'            # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 OUT_CHECKPOINT_PATH: "/content/drive/MyDrive/DL_project/federated_checkpoints"
-FINETUNE_METHOD: 'dense'           # or "dense"
+FINETUNE_METHOD: 'talos'           # or "dense"
 
 # talos fine-tuning (federated)
-TALOS_TARGET_SPARSITY: 0.40       # e.g. keep 1-x % of params
+TALOS_TARGET_SPARSITY: 0.90       # e.g. keep 1-x % of params
 TALOS_PRUNE_ROUNDS: 5           # how many mask‐calibration iterations
 CALIBRATION_SPLIT: 0.1              # fraction for Fisher‐calibration (already in place)
 
