@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
 
-from model_editing.TaLoS import calibrate_mask, compute_fisher_scores, calibrate_mask_layerwise_qk, masked_grad_context
+from model_editing.TaLoS import calibrate_mask, compute_fisher_scores, calibrate_mask_layerwise_qk
 
 
 def local_train(
@@ -128,7 +128,6 @@ def local_train_talos(
     if global_masks is not None:
         masks = global_masks
     else:
-        print(f">>> [DEBUG] NO GLOBAL MASKS. STARTING FROM SCRATCH USING calibrate_mask_layerwise_qk")
         # 1) Compute or load Fisher scores (on this client or a separate loader)
         if os.path.exists(fisher_path):
             fisher_scores = torch.load(fisher_path, map_location=device)
@@ -149,6 +148,12 @@ def local_train_talos(
             )
             torch.save(masks, mask_path)
 
+    # 3) Apply mask once before any training begins
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            if name in masks:
+                param.mul_(masks[name].to(param.device))
+
     # DEBUG: Inspect one block’s weights to ensure they are not all zero
     with torch.no_grad():
         sample_name = f"model.blocks.0.attn.qkv.weight"
@@ -165,24 +170,29 @@ def local_train_talos(
     # Infinite DataLoader for steps
     infinite_loader = itertools.cycle(dataloader)
 
-    with masked_grad_context(model, masks):
-        for step in range(local_steps):
-            inputs, labels = next(infinite_loader)
-            inputs, labels = inputs.to(device), labels.to(device)
+    for step in range(local_steps):
+        inputs, labels = next(infinite_loader)
+        inputs, labels = inputs.to(device), labels.to(device)
 
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+        optimizer.zero_grad()
+        outputs = model(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
 
-            if scheduler is not None:
-                scheduler.step()
+        if scheduler is not None:
+            scheduler.step()
 
-            # Accumulate metrics
-            total_loss += loss.item() * labels.size(0)
-            total_correct += outputs.argmax(1).eq(labels).sum().item()
-            total_samples += labels.size(0)
+        # Re‐apply mask immediately
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                if name in masks:
+                    param.mul_(masks[name].to(param.device))
+
+        # Accumulate metrics
+        total_loss += loss.item() * labels.size(0)
+        total_correct += outputs.argmax(1).eq(labels).sum().item()
+        total_samples += labels.size(0)
 
     avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
     accuracy = total_correct / total_samples if total_samples > 0 else 0.0
