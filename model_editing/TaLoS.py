@@ -224,12 +224,9 @@ def _accumulate_fisher(model, loss_fn, x, y, fisher_buf):
         create_graph=False
     )
     for (name, p), g in zip(model.named_parameters(), grads):
-        if g is None:
-            continue
-        fisher_buf[name] += g.detach() ** 2  # Eq. 7 in the paper
         if g is None or name not in fisher_buf:
             continue
-        fisher_buf[name] += g.detach() ** 2
+        fisher_buf[name] += g.detach() ** 2 # Eq. 7 in the paper
 
 # --------------------------------------------------------------------------
 #  main entry point --------------------------------------------------------
