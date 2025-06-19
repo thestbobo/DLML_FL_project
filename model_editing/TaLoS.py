@@ -308,12 +308,12 @@ def calibrate_mask_global(
             thr = vals.max()
             alive &= (all_scores <= thr)
 
-        # D) re-whitelist critical layers
-        ptr = 0
-        for name, sz in shapes:
-            if is_whitelisted(name):
-                alive[ptr : ptr + sz] = True
-            ptr += sz
+        # # D) re-whitelist critical layers
+        # ptr = 0
+        # for name, sz in shapes:
+        #     if is_whitelisted(name):
+        #         alive[ptr : ptr + sz] = True
+        #     ptr += sz
 
     # 3) final adjust to exactly final_keep
     all_scores = torch.cat([fisher[n].view(-1) for n, _ in shapes], dim=0).to(device)
@@ -330,12 +330,12 @@ def calibrate_mask_global(
         _, keep = torch.topk(vals, need, largest=False)
         alive[dropped[keep]] = True
 
-    # one last whitelist pass
-    ptr = 0
-    for name, sz in shapes:
-        if is_whitelisted(name):
-            alive[ptr : ptr + sz] = True
-        ptr += sz
+    # # one last whitelist pass
+    # ptr = 0
+    # for name, sz in shapes:
+    #     if is_whitelisted(name):
+    #         alive[ptr : ptr + sz] = True
+    #     ptr += sz
 
     # 4) build HARD 0/1 masks for training
     masks = {}
