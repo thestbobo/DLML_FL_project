@@ -255,7 +255,15 @@ def calibrate_mask_global(
                 flat_orig = orig[name].view(-1).to(device)
                 seg = alive[ptr:ptr + cnt].float().to(device)
                 soft = seg + (1.0 - seg) * 0.1
-                param.data.copy_(flat_orig * soft.view_as(flat_orig))
+                flat_masked = flat_orig * soft
+                param.data.view(-1).copy_(flat_masked)
+
+                # -----------------------------------------------------------------------------------
+                # param.data.copy_(flat_orig * soft.view_as(flat_orig))
+                # RuntimeError: The size of tensor a (384) must match the size of tensor b (75648)
+                # at non-singleton dimension 2
+                # -----------------------------------------------------------------------------------
+
                 ptr += cnt
 
         # B) compute Fisher on the softly-masked model
