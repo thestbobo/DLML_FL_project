@@ -247,15 +247,10 @@ def calibrate_mask_global(
 
     def is_whitelisted(name):
         return (
-          name.startswith("model.patch_embed")
+            name.startswith("model.patch_embed")
             or name.startswith("model.pos_embed")
             or name.startswith("model.cls_token")
-            or ".norm" in name
-            # whitelist your classifier head so it can learn:
             or name.startswith("classifier")
-            or ".attn.proj" in name
-            or ".mlp.fc1" in name
-            or ".mlp.fc2" in name
         )
 
     # 2) TaLoS rounds
