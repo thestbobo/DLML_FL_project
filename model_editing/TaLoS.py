@@ -1,4 +1,6 @@
 import math
+from collections import OrderedDict
+
 import torch
 
 
@@ -216,139 +218,141 @@ def calibrate_mask_layerwise_qk(
 
     return masks
 
+
 def calibrate_mask_global(
     model: torch.nn.Module,
     calib_loader,
     criterion,
     device: torch.device,
-    target_sparsity: float,
+    target_sparsity: float,   # e.g. 0.90 → prune 90% of Q/K entries
     rounds: int = 4,
-    soft_frac: float = 0.1,
+    random_fallback_frac: float = 0.1,
     seed: int = 42,
 ):
     """
-    Multi-round, global-but-only-QKV prune with soft masks.
-    Only the `in_proj_weight` and `in_proj_bias` of each MultiheadAttention
-    are scored and pruned; everything else is forced to mask=1.
-    Returns a dict name->mask tensor (same shape as param).
+    Multi-round global prune *only* on Q and K rows of each attn.qkv.*:
+      - Recompute Fisher on soft-masked model each round
+      - Geometric bottom-k prune of Q+K entries
+      - Leave everything else at mask=1
+    Returns masks: name → FloatTensor (1=keep, 0=prune)
     """
-    model.eval().to(device)
-
-    # 1) Locate all fused QKV tensors
+    # 1) identify all Q/K entries
+    # we'll build a single flat index of length total_QK = sum over blocks of (2*chunk*D_in + 2*chunk)
     qkv_names = []
-    for name, module in model.named_modules():
-        if isinstance(module, torch.nn.MultiheadAttention):
-            # these are the fused parameters
-            if module.in_proj_weight is not None:
-                qkv_names.append(f"{name}.in_proj_weight")
-            if module.in_proj_bias is not None:
-                qkv_names.append(f"{name}.in_proj_bias")
+    param_list = list(model.named_parameters())
+    for name, p in param_list:
+        if name.endswith("attn.qkv.weight") or name.endswith("attn.qkv.bias"):
+            qkv_names.append(name)
+    if not qkv_names:
+        raise RuntimeError("No attn.qkv.* found in model")
 
-    # 2) Initialize masks (1 = keep) for each, stored in an OrderedDict to preserve repeatable order
-    masks = OrderedDict()
-    for n in qkv_names:
-        param = dict(model.named_parameters())[n]
-        masks[n] = torch.ones_like(param, device=device)
+    # gather shapes and compute offsets into a single flat QK index
+    offsets = {}    # name → (start, length)
+    total = 0
+    for name in qkv_names:
+        sz = param_list[[n for n,_ in param_list].index(name)][1].numel()
+        # for weight: D_out = 3*chunk, bias: same length 3*chunk
+        # but we only prune first 2/3 of entries (Q+K)
+        chunk = sz // 3
+        # we'll interpret the first 2*chunk entries in the flattened tensor as Q+K
+        prune_len = 2 * chunk
+        offsets[name] = (total, prune_len)
+        total += prune_len
 
-    # Helper to compute Fisher on the currently soft-masked model
-    def compute_fisher_soft():
-        # apply current soft masks on QKV only
+    # alive_QK: which of those total entries are still alive
+    alive = torch.ones(total, dtype=torch.bool, device=device)
+    final_keep = max(1, math.ceil((1.0 - target_sparsity) * total))
+
+    model.to(device)
+    # stash original
+    orig = {name: p.data.clone().to(device) for name, p in param_list}
+
+    def apply_soft_mask():
+        # copy back into model.params: orig * (alive?1:0.1) on Q/K rows, leave V rows unchanged
         with torch.no_grad():
-            for n, mask in masks.items():
-                p = dict(model.named_parameters())[n]
-                orig = p.data.clone()
-                p.data.mul_(mask)  # 1 or soft_frac on QKV entries
-        fisher = compute_fisher_scores(model, calib_loader, criterion, device)
-        return fisher
+            for name, param in model.named_parameters():
+                if name in offsets:
+                    flat = orig[name].view(-1)
+                    start, keep_len = offsets[name]
+                    soft = torch.ones_like(flat, device=device)
+                    # Q/K part
+                    seg = alive[start:start+keep_len].float().to(device)
+                    soft_qk = seg + (1.0 - seg) * 0.1
+                    soft[:keep_len] = soft_qk
+                    # V rows (last third) stay 1.0
+                    param.data.copy_(soft.view_as(param.data))
+                else:
+                    # leave everything else at its orig value
+                    param.data.copy_(orig[name])
 
-    # 3) Multi-round prune
+    # 2) multi-round prune on Q/K
     for r in range(rounds):
-        # recompute Fisher
-        fisher = compute_fisher_soft()
+        apply_soft_mask()
 
-        # flatten all *alive* scores from every QKV tensor
-        all_scores = torch.cat([
-            fisher[n].abs().reshape(-1)[masks[n].reshape(-1) == 1.0]
-            for n in qkv_names
-        ], dim=0)
+        # recompute fisher on the entire model
+        fisher = compute_fisher_scores(model, calib_loader, criterion, device)
 
-        # how many to keep this round (geometric schedule)
-        total_alive = all_scores.numel()
-        keep_count = max(1, math.ceil((1 - target_sparsity)**((r+1)/rounds) * total_alive))
+        # build flat QK score vector
+        all_scores = torch.zeros(total, device=device)
+        for name in qkv_names:
+            fs = fisher[name].view(-1)
+            start, keep_len = offsets[name]
+            all_scores[start:start+keep_len] = fs[:keep_len]
 
-        # if all zeros, random fallback
-        if all_scores.max().item() == 0:
-            rng = torch.Generator(device=device).manual_seed(seed + r)
-            perm = torch.randperm(total_alive, generator=rng, device=device)
-            threshold_score = None  # we’ll sample exactly
-            is_random = True
+        # zero out already-dead
+        all_scores *= alive.float()
+
+        # bottom-k among alive
+        idxs = alive.nonzero(as_tuple=False).view(-1)
+        cnt_alive = idxs.numel()
+        keep_r = max(1, math.ceil((1.0 - target_sparsity) ** ((r+1)/rounds) * cnt_alive))
+        sub = all_scores[idxs]
+        if sub.numel()==0 or sub.max().item()==0.0:
+            rng = torch.Generator(device=device).manual_seed(seed+r)
+            perm = torch.randperm(cnt_alive, generator=rng, device=device)
+            fb = max(1, math.ceil(random_fallback_frac*cnt_alive))
+            new = torch.zeros_like(alive)
+            new[idxs[perm[:fb]]] = True
+            alive = new
         else:
-            # find threshold so that *keep_count* smallest scores survive
-            topk = torch.topk(all_scores, keep_count, largest=False)
-            thresh = topk.values.max().item()
-            is_random = False
+            vals,_ = torch.topk(sub, keep_r, largest=False)
+            tau = vals.max()
+            alive = alive & (all_scores <= tau)
 
-        # rebuild masks per-tensor
-        ptr = 0
-        for n in qkv_names:
-            sz = masks[n].numel()
-            scores = fisher[n].abs().reshape(-1)
-            cur_mask = masks[n].reshape(-1)
-            alive_idxs = (cur_mask == 1.0).nonzero(as_tuple=False).view(-1)
+    # 3) final exact adjust
+    idxs = alive.nonzero(as_tuple=False).view(-1)
+    curr = idxs.numel()
+    if curr>final_keep:
+        vals = all_scores[idxs]
+        drop_n = curr-final_keep
+        _, didx = torch.topk(vals, drop_n, largest=True)
+        alive[idxs[didx]] = False
+    elif curr<final_keep:
+        dropped = (~alive).nonzero(as_tuple=False).view(-1)
+        need = final_keep-curr
+        vals = all_scores[dropped]
+        _, kidx = torch.topk(vals, need, largest=False)
+        alive[dropped[kidx]] = True
 
-            if is_random:
-                # randomly pick keep_count among *all* alive
-                sel = alive_idxs[perm[:keep_count]]
-                new_mask = torch.zeros_like(cur_mask)
-                new_mask[sel] = 1.0
-            else:
-                # keep those alive entries whose score <= thresh
-                new_mask = cur_mask.clone().zero_()
-                sel = alive_idxs[scores[alive_idxs] <= thresh]
-                new_mask[sel] = 1.0
-
-            masks[n] = new_mask.view_as(masks[n])
-            ptr += sz
-
-        # soft-mask between rounds
-        for n in qkv_names:
-            masks[n] = masks[n] + (1 - masks[n]) * soft_frac
-
-    # 4) Final hard prune to exact target_sparsity on the *1.0* entries
-    # collect final real-keep entries per-tensor
-    final_scores = torch.cat([fisher[n].abs().reshape(-1) for n in qkv_names], dim=0)
-    final_alive = torch.cat([
-        (masks[n].reshape(-1) == 1.0).to(torch.bool)
-        for n in qkv_names
-    ], dim=0)
-    K = final_alive.sum().item()
-    target_keep = max(1, math.ceil((1 - target_sparsity) * final_alive.numel()))
-    if K > target_keep:
-        # drop the highest among the currently exactly-one entries
-        alive_scores = final_scores[final_alive]
-        drop_vals, drop_idx = torch.topk(alive_scores, K - target_keep, largest=True)
-        # now build a single vector mask and scatter back
-        flat = torch.cat([masks[n].reshape(-1) for n in qkv_names])
-        flat[ final_alive.nonzero(as_tuple=False).view(-1)[drop_idx] ] = soft_frac
-        # write back into per-tensor
-        ptr = 0
-        for n in qkv_names:
-            sz = masks[n].numel()
-            masks[n] = flat[ptr:ptr+sz].view_as(masks[n])
-            ptr += sz
-    # if K < target_keep, you'd analogously fill some soft_frac→1.0, omitted for brevity
-
-    # 5) Everything *not* in qkv_names remains mask=1.0
-    final_masks = {}
+    # 4) build final masks: 1.0 everywhere; 0.0 on pruned Q/K entries
+    masks = {}
     for name, param in model.named_parameters():
-        if name in masks:
-            final_masks[name] = masks[name]
+        if name in offsets:
+            flat = torch.ones(param.numel(), device=device)
+            start, keep_len = offsets[name]
+            flat[:keep_len][~alive[start:start+keep_len]] = 0.0
+            masks[name] = flat.view_as(param).clone()
         else:
-            final_masks[name] = torch.ones_like(param, device=device)
+            masks[name] = torch.ones_like(param)
 
-    return final_masks
+    # debug
+    print("[MASK DIAG QK-only]")
+    for name in qkv_names:
+        m = masks[name]
+        pct = 100 * float(m.view(-1)[:offsets[name][1]].sum()) / offsets[name][1]
+        print(f"{name:50s} → {pct:5.1f}% of Q/K kept")
 
-
+    return masks
 
 
 
