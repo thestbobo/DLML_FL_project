@@ -227,6 +227,9 @@ def _accumulate_fisher(model, loss_fn, x, y, fisher_buf):
         if g is None:
             continue
         fisher_buf[name] += g.detach() ** 2  # Eq. 7 in the paper
+        if g is None or name not in fisher_buf:
+            continue
+        fisher_buf[name] += g.detach() ** 2
 
 # --------------------------------------------------------------------------
 #  main entry point --------------------------------------------------------
