@@ -245,17 +245,17 @@ def calibrate_mask_global(
     N = sum(sz for _, sz in shapes)
     alive = torch.ones(N, dtype=torch.bool, device=device)
 
-    def is_whitelisted(name):
-        return (
-            name.startswith("model.patch_embed")
-            or name.startswith("model.pos_embed")
-            or name.startswith("model.cls_token")
-            or ".norm" in name
-            or name.startswith("head")
-            or ".attn.proj" in name
-            or ".mlp.fc1" in name
-            or ".mlp.fc2" in name
-        )
+    # def is_whitelisted(name):
+    #     return (
+    #         name.startswith("model.patch_embed")
+    #         or name.startswith("model.pos_embed")
+    #         or name.startswith("model.cls_token")
+    #         or ".norm" in name
+    #         or name.startswith("head")
+    #         or ".attn.proj" in name
+    #         or ".mlp.fc1" in name
+    #         or ".mlp.fc2" in name
+    #     )
 
     final_keep = max(1, math.ceil((1 - target_sparsity) * N))
 
