@@ -196,6 +196,9 @@ def main():
                 target_sparsity=config.TALOS_TARGET_SPARSITY,
                 rounds=R
             )
+            total = sum(m.numel() for m in shared_masks.values())
+            kept = sum(int(m.sum().item()) for m in shared_masks.values())
+            print(f"[DEBUG] GLOBAL MASK → kept {kept}/{total} ≈ {100 * kept / total:.1f}% of all params")
 
             torch.save(shared_masks, global_mask_file)
             del dummy, fisher_scores
@@ -206,6 +209,9 @@ def main():
             # load pre-computed mask
             fisher_scores = torch.load(global_fisher_file, map_location=device)
             shared_masks = torch.load(global_mask_file, map_location=device)
+            total = sum(m.numel() for m in shared_masks.values())
+            kept = sum(int(m.sum().item()) for m in shared_masks.values())
+            print(f"[DEBUG] LOADED GLOBAL MASK WITH → kept {kept}/{total} ≈ {100 * kept / total:.1f}% of all params")
 
         print(
             f">>> Shared mask ready ({'loaded from' if not need_to_compute_mask else 'computed and saved to'}) → {masks_root}")
