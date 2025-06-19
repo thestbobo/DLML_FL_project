@@ -128,6 +128,7 @@ def local_train_talos(
     if global_masks is not None:
         masks = global_masks
     else:
+        print(f">>> [DEBUG] NO GLOBAL MASKS. STARTING FROM SCRATCH USING calibrate_mask_layerwise_qk")
         # 1) Compute or load Fisher scores (on this client or a separate loader)
         if os.path.exists(fisher_path):
             fisher_scores = torch.load(fisher_path, map_location=device)
