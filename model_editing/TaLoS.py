@@ -245,6 +245,19 @@ def calibrate_mask_global(
     # compute final number to keep
     final_keep = max(1, math.ceil((1 - target_sparsity) * N))
 
+    def is_whitelisted(name):
+        return (
+          name.startswith("model.patch_embed")
+            or name.startswith("model.pos_embed")
+            or name.startswith("model.cls_token")
+            or ".norm" in name
+            # whitelist your classifier head so it can learn:
+            or name.startswith("classifier")
+            or ".attn.proj" in name
+            or ".mlp.fc1" in name
+            or ".mlp.fc2" in name
+        )
+
     # 2) TaLoS rounds
     for r in range(1, rounds + 1):
         # A) apply soft mask to model from orig
@@ -301,6 +314,14 @@ def calibrate_mask_global(
             thr = vals.max()
             alive = alive & (all_scores <= thr)
 
+        # D) re-whitelist critical layers so norms, pos-embeds, and your classifier head stay trainable
+        ptr = 0
+        for name, sz in shapes:
+            if is_whitelisted(name):
+                alive[ptr : ptr + sz] = True
+            ptr += sz
+
+
     # 3) final adjust to exactly final_keep
     all_scores = torch.cat([fisher[n].view(-1) for n, _ in shapes], dim=0).to(device)
     alive_idxs = alive.nonzero(as_tuple=False).view(-1)
@@ -315,6 +336,13 @@ def calibrate_mask_global(
         vals = all_scores[dropped]
         _, keep = torch.topk(vals, need, largest=False)
         alive[dropped[keep]] = True
+
+    # one last whitelist pass before building masks
+    ptr = 0
+    for name, sz in shapes:
+        if is_whitelisted(name):
+            alive[ptr : ptr + sz] = True
+        ptr += sz
 
     # 4) build HARD 0/1 masks for training
     masks = {}
