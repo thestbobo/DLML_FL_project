@@ -231,7 +231,6 @@ def _accumulate_fisher(model, loss_fn, x, y, fisher_buf):
 # --------------------------------------------------------------------------
 #  main entry point --------------------------------------------------------
 # --------------------------------------------------------------------------
-@torch.no_grad()
 def calibrate_mask_talos(
     model: nn.Module,
     calib_loader,                       # any DataLoader (labels optional)
