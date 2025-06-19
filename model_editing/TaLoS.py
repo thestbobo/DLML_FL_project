@@ -1,4 +1,6 @@
 import math
+import torch
+
 
 def compute_fisher_scores(model, dataloader, criterion, device):
     model.eval()
@@ -74,6 +76,26 @@ def calibrate_mask(fisher_scores, target_sparsity, rounds):
 
     return masks
 
+# this was used in centralized, replaced with calibrate_mask
+# one-shot pruning (fixed threshold) -> not used right now, it's noisy
+def calibrate_mask_one_shot(model, fisher_scores, target_sparsity, rounds):
+    masks = {name: torch.ones_like(param) for name, param in model.named_parameters() if param.requires_grad}
+    total_params = sum(param.numel() for param in model.parameters() if param.requires_grad)
+    target_params = int(total_params * (1 - target_sparsity))       # params to be kept
+
+    for _ in range(rounds):
+        # Flatten scores and masks
+        all_scores = torch.cat([fisher_scores[name][masks[name] > 0].flatten() for name in fisher_scores])
+        threshold = torch.topk(all_scores, target_params, largest=False).values[-1]
+
+        # Update masks
+        for name in masks:
+            masks[name] = (fisher_scores[name] <= threshold).float()
+
+        # Update target params for next round
+        target_params = int(target_params * (1 - target_sparsity / rounds))
+
+    return masks
 
 # federated model, calibrates mask layerwise, priuning only Q/K layers untill reaching targert_qk_sparsity -> 90% QK pruned = 60% global weights pruned
 def calibrate_mask_layerwise_qk(
@@ -197,142 +219,114 @@ def calibrate_mask_layerwise_qk(
 
 # implemented for federated setting, globally prunes all parameters, this method is not as strategic as the QK, but allows us to prune more weights than QK
 
-import torch
-import torch.nn as nn
-from collections import defaultdict
-from contextlib import contextmanager
-
-# --------------------------------------------------------------------------
-#  tiny helper: register 1-line gradient hooks
-# --------------------------------------------------------------------------
-def _register_grad_mask(model, mask_dict):
-    """Multiply every incoming gradient by the (binary) mask tensor."""
-    for name, p in model.named_parameters():
-        if name in mask_dict:
-            p.register_hook(lambda g, m=mask_dict[name]: g.mul_(m))
-
-# --------------------------------------------------------------------------
-#  tiny helper: Fisher-score accumulator on a single mini-batch
-# --------------------------------------------------------------------------
-def _accumulate_fisher(model, loss_fn, x, y, fisher_buf):
-    out = model(x)
-    loss = loss_fn(out, y)
-    grads = torch.autograd.grad(
-        loss,
-        [p for p in model.parameters() if p.requires_grad],
-        retain_graph=False,
-        create_graph=False
-    )
-    for (name, p), g in zip(model.named_parameters(), grads):
-        if g is None or name not in fisher_buf:
-            continue
-        fisher_buf[name] += g.detach() ** 2 # Eq. 7 in the paper
-
-# --------------------------------------------------------------------------
-#  main entry point --------------------------------------------------------
-# --------------------------------------------------------------------------
-def calibrate_mask_talos(
-    model: nn.Module,
-    calib_loader,                       # any DataLoader (labels optional)
-    target_sparsity: float = 0.90,      # k  in the paper
-    rounds: int = 4,                    # R  in the paper
-    iters_per_round: int = 10,          # ≃ 40 steps total as §A.2
-    loss_fn=nn.CrossEntropyLoss(),
-    device: str = "cuda",
-    min_layer_keep: float = 0.01,       # c  in §A.2
-    maskable=(nn.Linear, nn.Conv2d, nn.LayerNorm)
+def calibrate_mask_global(
+    model: torch.nn.Module,
+    calib_loader,
+    criterion,
+    device: torch.device,
+    target_sparsity: float,
+    rounds: int = 4,
+    random_fallback_frac: float = 0.1,
+    seed: int = 42,
 ):
     """
-    Iterative TaLoS global mask calibration (Algorithm 1),
-    but mask=1 keeps the least-sensitive weights trainable.
+    Multi-round global TaLoS calibration: bottom-k schedule, exact fallback,
+    and debug printing of kept parameters.
     """
-    model = model.to(device).eval()
+    model.to(device)
+    # 0) stash the original weights
+    orig = {name: param.data.clone().cpu() for name, param in model.named_parameters()}
 
-    # --- initial full-1 mask ------------------------------------------------
-    mask_dict = {
-        n: torch.ones_like(p, dtype=torch.float32, device=p.device)
-        for n, p in model.named_parameters()
-        if p.requires_grad and
-           isinstance(dict(model.named_modules())[n.rsplit('.', 1)[0]], maskable)
-    }
+    # 1) build flat index of all params
+    shapes = [(name, p.numel()) for name, p in model.named_parameters()]
+    N = sum(sz for _, sz in shapes)
+    alive = torch.ones(N, dtype=torch.bool, device=device)
 
-    total = sum(m.numel() for m in mask_dict.values())
-    pruned = 0
+    # compute final number to keep
+    final_keep = max(1, math.ceil((1 - target_sparsity) * N))
 
-    # -----------------------------------------------------------------------
-    #  iterative rounds
-    # -----------------------------------------------------------------------
+    # 2) TaLoS rounds
     for r in range(1, rounds + 1):
-        # prepare Fisher buffers for currently trainable params
-        fisher = {
-            n: torch.zeros_like(m)
-            for n, m in mask_dict.items()
-            if mask_dict[n].any()
-        }
+        # A) apply soft mask to model from orig
+        ptr = 0
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                cnt = param.numel()
+                flat_orig = orig[name].view(-1).to(device)
+                seg = alive[ptr:ptr + cnt].float().to(device)
+                soft = seg + (1.0 - seg) * 0.1
+                param.data.copy_(flat_orig * soft.view_as(flat_orig))
+                ptr += cnt
 
-        # accumulate per-batch
-        count = 0
-        for batch in calib_loader:
-            if count >= iters_per_round:
-                break
-            if isinstance(batch, (list, tuple)):
-                x, y = batch[0].to(device), batch[1].to(device)
-            else:
-                x = batch.to(device)
-                with torch.no_grad():
-                    logits = model(x)
-                y = torch.multinomial(torch.softmax(logits, dim=-1), 1).squeeze(-1)
-            _accumulate_fisher(model, loss_fn, x, y, fisher)
-            count += 1
+        # B) compute Fisher on the softly-masked model
+        fisher = compute_fisher_scores(model, calib_loader, criterion, device)
 
-        # normalize
-        for n in fisher:
-            fisher[n] /= count
+        # zero out scores of already-dead
+        ptr = 0
+        for name, p in model.named_parameters():
+            cnt = p.numel()
+            if name in fisher:
+                fs = fisher[name].view(-1).to(device)
+                fs *= alive[ptr:ptr + cnt].float().to(device)
+                fisher[name] = fs.view_as(fisher[name])
+            ptr += cnt
 
-        # how many to freeze this round
-        current_target = int(target_sparsity * (r / rounds) * total)
-        to_freeze = current_target - pruned
-        pruned = current_target
+        # C) bottom-k global prune among alive
+        all_scores = torch.cat([fisher[n].view(-1) for n, _ in shapes], dim=0).to(device)
+        idxs = alive.nonzero(as_tuple=False).view(-1)
+        cnt_alive = idxs.numel()
+        # geometric schedule keep count
+        keep_r = max(1, math.ceil((1 - target_sparsity) ** (r / rounds) * cnt_alive))
+        sub = all_scores[idxs]
 
-        if to_freeze <= 0:
-            continue
+        if sub.max().item() == 0.0:
+            # fallback: keep random fraction exactly
+            rng = torch.Generator(device=device).manual_seed(seed + r)
+            perm = torch.randperm(cnt_alive, generator=rng, device=device)
+            keep_fb = max(1, math.ceil(random_fallback_frac * cnt_alive))
+            new_alive = torch.zeros_like(alive)
+            new_alive[idxs[perm[:keep_fb]]] = True
+            alive = new_alive
+        else:
+            # keep bottom-keep_r globally
+            vals, _ = torch.topk(sub, keep_r, largest=False)
+            thr = vals.max()
+            alive = alive & (all_scores <= thr)
 
-        # gather all scores of still-trainable params
-        all_scores = torch.cat([
-            f[m.bool()].view(-1)
-            for m, f in zip(mask_dict.values(), fisher.values())
-        ])
-        # find the k-th *largest* among them: these are the most-sensitive to freeze
-        thresh, _ = torch.kthvalue(all_scores, all_scores.numel() - to_freeze + 1)
+    # 3) final adjust to exactly final_keep
+    all_scores = torch.cat([fisher[n].view(-1) for n, _ in shapes], dim=0).to(device)
+    alive_idxs = alive.nonzero(as_tuple=False).view(-1)
+    curr = alive_idxs.numel()
+    if curr > final_keep:
+        vals = all_scores[alive_idxs]
+        _, drop = torch.topk(vals, curr - final_keep, largest=True)
+        alive[alive_idxs[drop]] = False
+    elif curr < final_keep:
+        dropped = (~alive).nonzero(as_tuple=False).view(-1)
+        need = final_keep - curr
+        vals = all_scores[dropped]
+        _, keep = torch.topk(vals, need, largest=False)
+        alive[dropped[keep]] = True
 
-        # now freeze (mask=0) where fisher >= thresh, but leave at least min_layer_keep
-        for n, m in mask_dict.items():
-            alive = m.bool()
-            sensitive = (fisher[n] >= thresh) & alive
-            # ensure we don't over-freeze a layer
-            max_freeze = alive.sum() - int(min_layer_keep * m.numel())
-            if max_freeze > 0 and alive.sum() > 0 and sensitive.sum() > max_freeze:
-                # pick the top max_freeze most-sensitive
-                vals = fisher[n][alive].view(-1)
-                topk_vals, _ = torch.topk(vals, max_freeze, largest=True)
-                layer_thresh = topk_vals.min()
-                sensitive = (fisher[n] >= layer_thresh) & alive
-            m[sensitive] = 0.0  # freeze these most-sensitive
+    # 4) build HARD 0/1 masks for training
+    masks = {}
+    ptr = 0
+    params = dict(model.named_parameters())
+    for name, sz in shapes:
+        bin_mask = alive[ptr:ptr + sz].float().to(device)
+        masks[name] = bin_mask.view_as(params[name])
+        ptr += sz
 
-    kept = sum(m.sum().item() for m in mask_dict.values())
-    print(f"[TaLoS] Mask ready – keeping {kept/total:.2%} of params ({kept}/{total}).")
-    return mask_dict
+    # debug print: summary and per-layer
+    kept = alive.sum().item()
+    print(f"[MASK SUMMARY] Kept {kept}/{N} params ({100 * kept / N:.1f}% kept, target {(1 - target_sparsity) * 100:.1f}%)")
+    print("[MASK DIAG] per-layer keep%:")
+    for name, m in masks.items():
+        pct = 100 * m.sum().item() / m.numel()
+        print(f"  {name:50s} -> {pct:5.1f}%")
 
-# ----------------------------------- OPTIONAL ------------------------------
-@contextmanager
-def masked_grad_context(model, mask_dict):
-    """
-    Usage:
-        with masked_grad_context(model, mask):
-            train(...)
-    """
-    _register_grad_mask(model, mask_dict)
-    yield
+    return masks
+
 
 # this one should work the same as qk but prunes the least sensitive weights instead
 def calibrate_mask_layerwise_qk_ls(
