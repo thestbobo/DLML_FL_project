@@ -217,8 +217,6 @@ def calibrate_mask_layerwise_qk(
     return masks
 
 
-# implemented for federated setting, globally prunes all parameters, this method is not as strategic as the QK, but allows us to prune more weights than QK
-
 def calibrate_mask_global(
     model: torch.nn.Module,
     calib_loader,
@@ -226,134 +224,117 @@ def calibrate_mask_global(
     device: torch.device,
     target_sparsity: float,
     rounds: int = 4,
+    soft_prune: float = 0.1,
     random_fallback_frac: float = 0.1,
     seed: int = 42,
 ):
     """
-    Multi‐round global TaLoS calibration, soft‐masking during Fisher rounds
-    but returning a hard 0/1 mask for training.
+    Multi-round TaLoS calibration *only* on Q/K (attn.qkv) weights & biases.
+
+    Args:
+        model:           the ViT to prune in-place
+        calib_loader:    DataLoader for Fisher calibration
+        criterion:       loss fn for Fisher
+        device:          torch.device
+        target_sparsity: fraction of Q/K to prune (e.g. 0.9)
+        rounds:          number of TaLoS rounds (e.g. 4)
+        soft_prune:      multiplier for pruned entries during calibration (e.g. 0.1)
+        random_fallback_frac: if all Fisher=0, randomly keep this frac
+        seed:            RNG seed for fallbacks
+
+    Returns:
+        masks: dict[name→FloatTensor mask], where
+               for Q/K: mask∈{0,1}, else mask=1.0
     """
-    model.to(device)
-    # 0) stash the original weights
-    orig = {
-        name: param.data.clone().cpu()
-        for name, param in model.named_parameters()
-    }
+    # 1) stash originals & collect Q/K param shapes
+    orig = {n: p.data.clone().to(device)
+            for n, p in model.named_parameters() if "attn.qkv" in n}
+    qk_names = list(orig.keys())
+    qk_shapes = [orig[n].numel() for n in qk_names]
+    N = sum(qk_shapes)
 
-    # 1) build flat index of all params
-    shapes = [(name, p.numel()) for name, p in model.named_parameters()]
-    N = sum(sz for _, sz in shapes)
+    # 2) alive indicator for Q/K entries
     alive = torch.ones(N, dtype=torch.bool, device=device)
+    final_keep = max(1, math.ceil((1.0 - target_sparsity) * N))
 
-    def is_whitelisted(name):
-        return (
-            name.startswith("model.patch_embed")
-            or name.startswith("model.pos_embed")
-            or name.startswith("model.cls_token")
-            or ".norm" in name
-            or name.startswith("head")
-            or ".attn.proj" in name
-            or ".mlp.fc1" in name
-            or ".mlp.fc2" in name
-        )
+    # helper to flatten Q/K scores in same order
+    def flatten_qk(fisher_dict):
+        flats = []
+        for n in qk_names:
+            flats.append(fisher_dict[n].reshape(-1))
+        return torch.cat(flats, dim=0)
 
-    final_keep = max(1, math.ceil((1 - target_sparsity) * N))
+    ptrs = torch.tensor([0] + qk_shapes).cumsum(0)
 
-    # 2) TaLoS rounds
-    for r in range(1, rounds + 1):
-        # A) apply soft mask to model from orig
-        ptr = 0
+    model.to(device)
+    # 3) multi-round soft-mask calibration
+    for r in range(rounds):
+        # A) apply soft mask to Q/K weights & biases
         with torch.no_grad():
-            for name, param in model.named_parameters():
-                cnt = param.numel()
-                flat_orig = orig[name].view(-1).to(device)
-                seg = alive[ptr : ptr + cnt].float().to(device)
-                soft = seg + (1.0 - seg) * 0.1
-                new_flat = flat_orig * soft
-                param.data.copy_( new_flat.view_as(param.data) )
-                ptr += cnt
+            for idx, name in enumerate(qk_names):
+                cnt = qk_shapes[idx]
+                seg = alive[ptrs[idx]:ptrs[idx+1]].float().to(device)
+                soft = seg + (1 - seg) * soft_prune
+                model_param = dict(model.named_parameters())[name]
+                model_param.data.copy_(orig[name].reshape(-1) * soft
+                                       .view_as(model_param.data)
+                                       .to(model_param.device))
 
-        # B) compute Fisher on the softly‐masked model
+        # B) recompute Fisher
         fisher = compute_fisher_scores(model, calib_loader, criterion, device)
 
-        # zero out scores of already‐dead
-        ptr = 0
-        for name, p in model.named_parameters():
-            cnt = p.numel()
-            if name in fisher:
-                fs = fisher[name].view(-1).to(device)
-                fs *= alive[ptr : ptr + cnt].float().to(device)
-                fisher[name] = fs.view_as(fisher[name])
-            ptr += cnt
+        # zero out already-dead entries
+        flat = flatten_qk(fisher)
+        flat = flat * alive.float().to(flat.device)
 
-        # C) bottom-k global prune among alive
-        all_scores = torch.cat([fisher[n].view(-1) for n, _ in shapes], dim=0).to(device)
+        # C) bottom-k prune among alive
         idxs = alive.nonzero(as_tuple=False).view(-1)
         cnt_alive = idxs.numel()
-        # geometric schedule
-        keep_r = max(
-            1,
-            math.ceil((1 - target_sparsity) ** (r / rounds) * cnt_alive)
-        )
-        sub = all_scores[idxs]
+        # geometric keep schedule
+        keep_r = max(1, math.ceil((1.0 - target_sparsity) ** ((r+1)/rounds) * cnt_alive))
+        sub = flat[idxs]
         if sub.max().item() == 0.0:
-            rng = torch.Generator(device=device).manual_seed(seed + r)
-            perm = torch.randperm(cnt_alive, generator=rng, device=device)
-            keep_fb = max(1, math.ceil(random_fallback_frac * cnt_alive))
-            new_alive = torch.zeros_like(alive)
-            new_alive[idxs[perm[:keep_fb]]] = True
-            alive = new_alive
+            # random fallback
+            g = torch.Generator(device=device).manual_seed(seed + r)
+            perm = torch.randperm(cnt_alive, generator=g, device=device)
+            kfb = max(1, math.ceil(random_fallback_frac * cnt_alive))
+            new = torch.zeros_like(alive)
+            new[idxs[perm[:kfb]]] = True
+            alive = new
         else:
             vals, _ = torch.topk(sub, keep_r, largest=False)
             thr = vals.max()
-            alive &= (all_scores <= thr)
+            alive = alive & (flat <= thr)
 
-        # D) re-whitelist critical layers
-        ptr = 0
-        for name, sz in shapes:
-            if is_whitelisted(name):
-                alive[ptr : ptr + sz] = True
-            ptr += sz
-
-    # 3) final adjust to exactly final_keep
-    all_scores = torch.cat([fisher[n].view(-1) for n, _ in shapes], dim=0).to(device)
-    alive_idxs = alive.nonzero(as_tuple=False).view(-1)
-    curr = alive_idxs.numel()
+    # 4) final exact adjust to hit final_keep
+    flat = flatten_qk(fisher)
+    idxs = alive.nonzero(as_tuple=False).view(-1)
+    curr = idxs.numel()
     if curr > final_keep:
-        vals = all_scores[alive_idxs]
+        vals = flat[idxs]
         _, drop = torch.topk(vals, curr - final_keep, largest=True)
-        alive[alive_idxs[drop]] = False
+        alive[idxs[drop]] = False
     elif curr < final_keep:
         dropped = (~alive).nonzero(as_tuple=False).view(-1)
         need = final_keep - curr
-        vals = all_scores[dropped]
+        vals = flat[dropped]
         _, keep = torch.topk(vals, need, largest=False)
         alive[dropped[keep]] = True
 
-    # one last whitelist pass
-    ptr = 0
-    for name, sz in shapes:
-        if is_whitelisted(name):
-            alive[ptr : ptr + sz] = True
-        ptr += sz
-
-    # 4) build HARD 0/1 masks for training
+    # 5) scatter into per-param masks (Q/K get {0,1}, others 1.0)
     masks = {}
-    ptr = 0
-    params = dict(model.named_parameters())
-    for name, sz in shapes:
-        bin_mask = alive[ptr : ptr + sz].float().to(device)
-        masks[name] = bin_mask.view_as(params[name])
-        ptr += sz
-
-    # debug print
-    print("[MASK DIAG]")
-    for name, m in masks.items():
-        if any(p in name for p in ("attn.qkv", "attn.proj", "mlp")):
-            pct = 100 * m.sum().item() / m.numel()
-            print(f"{name:50s} → {pct:5.1f}% kept")
+    # Q/K
+    for idx, name in enumerate(qk_names):
+        cnt = qk_shapes[idx]
+        seg = alive[ptrs[idx]:ptrs[idx+1]].float()
+        masks[name] = seg.view_as(orig[name]).to(device)
+    # everything else
+    for name, p in model.named_parameters():
+        if name not in masks:
+            masks[name] = torch.ones_like(p, device=device)
 
     return masks
+
 
 
 
