@@ -236,7 +236,7 @@ def calibrate_mask_global(
     model.to(device)
 
     # 0) stash original weights
-    orig = {n: p.data.clone().cpu() for n, p in model.named_parameters()}
+    orig = {name: param.data.clone().to(device) for name, param in model.named_parameters()}
 
     # 1) build shapes and global index
     shapes = [(name, p.numel()) for name, p in model.named_parameters()]
