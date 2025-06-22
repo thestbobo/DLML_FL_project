@@ -576,4 +576,11 @@ def calibrate_mask_layerwise_qk_ls(
     else:
         print(">>> [DEBUG] No Q/K entries found in any block.")
 
+    print("[LAYER MASK DIAG] per-layer keep%:")
+    for name, m in masks.items():
+        kept = m.sum().item()
+        total = m.numel()
+        pct = 100.0 * kept / total
+        print(f"  {name:50s} -> {pct:5.1f}% ({int(kept)}/{total})")
+
     return masks
