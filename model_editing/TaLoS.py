@@ -367,7 +367,7 @@ def calibrate_mask_layerwise_qk_ls(
     target_qk_sparsity: float = 0.90,
     keep_ratio_per_block: float = 0.10,
     random_fallback_frac: float = 0.10,
-    max_rounds: int = 5,
+    max_rounds: int = 4,
 ):
     """
     Build per-block masks that prune away the MOST-SENSITIVE Q/K rows (highest–Fisher)
