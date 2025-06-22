@@ -364,6 +364,7 @@ def calibrate_mask_global(
 def calibrate_mask_layerwise_qk_ls(
     model,
     fisher_scores: dict,
+    target_qk_sparsity: float = 0.90,
     keep_ratio_per_block: float = 0.10,
     random_fallback_frac: float = 0.10,
     max_rounds: int = 5,
@@ -389,7 +390,7 @@ def calibrate_mask_layerwise_qk_ls(
              - "model.blocks.{i}.attn.qkv.bias" (if bias exists).
              Everything else in the model is untouched (not in `masks`).
     """
-    target_qk_sparsity: float = 0.90
+
     masks = {}  # final binary masks (float of 0/1)
 
     # 1) collect all block indices that have a fused QKV layer

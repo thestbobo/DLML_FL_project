@@ -7,7 +7,7 @@ import yaml
 import wandb
 from torch.utils.data import DataLoader, ConcatDataset, Subset
 import re
-from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_global, calibrate_mask_layerwise_qk
+from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_global, calibrate_mask_layerwise_qk, calibrate_mask_layerwise_qk_ls
 from models.dino_ViT_b16 import DINO_ViT
 from fl_core.client import local_train, local_train_talos
 from fl_core.server import average_weights_fedavg
@@ -188,13 +188,11 @@ def main():
             #     target_qk_sparsity=config.TALOS_TARGET_SPARSITY,
             #     max_rounds=R
             # )
-            shared_masks = calibrate_mask_global(
-                model=dummy,
-                calib_loader=calib_loader,
-                criterion=dummy_criterion,
-                device=device,
-                target_sparsity=config.TALOS_TARGET_SPARSITY,
-                rounds=R
+            shared_masks = calibrate_mask_layerwise_qk_ls(
+                model=global_model,
+                fisher_scores=fisher_scores,
+                target_qk_sparsity=config.TALOS_TARGET_SPARSITY,
+                max_rounds=config.TALOS_PRUNE_ROUNDS
             )
             total = sum(m.numel() for m in shared_masks.values())
             kept = sum(int(m.sum().item()) for m in shared_masks.values())
