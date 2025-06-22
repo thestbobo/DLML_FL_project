@@ -4,7 +4,7 @@
 
 wandb_project_folder: "CIFAR-100_centralized"         # Name of the project folder in wandb
 run_id: ""
-name: "global_mask_fix_acc&loss"
+name: "global_mask_test_qk_ls"
 seed: 42                                              # Random seed for reproducibility
 
 # --------------------------
