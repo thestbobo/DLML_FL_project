@@ -21,7 +21,7 @@ def load_cifar100(root="./data"):
     return datasets.CIFAR100(root=root, train=True, download=True, transform=transform)
 
 
-def get_client_datasets(iid, num_clients, nc=2, seed=42):
+def get_client_datasets(iid, num_clients, nc, seed):
     """
     Load CIFAR-100 dataset and split it into client datasets.
     """
@@ -54,7 +54,7 @@ def split_iid(dataset, num_clients):
     return splits
 
 
-def split_noniid(dataset, num_clients, nc=2, seed=42):
+def split_noniid(dataset, num_clients, nc, seed):
     """
     Non-IID sharding: carve the training set into num_clients*nc shards
     and give each client exactly nc shards (so each client sees only

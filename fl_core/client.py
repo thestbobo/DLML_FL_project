@@ -1,123 +1,75 @@
-import math
+# 📁 client.py – Clustered Conflict-Aware In-Place Masking (no TaLoS)
 
+import itertools
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
 
-from model_editing.TaLoS import calibrate_mask, compute_fisher_scores
-
-
-def local_train(model, dataloader, epochs, lr, device, warmup_epochs=5):
-    model.to(device)
-    model.train()
-
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
-
-    # Warm-up + Cosine scheduler
-    total_epochs = epochs
-    w = min(warmup_epochs, total_epochs)
-
-    def lr_fn(epoch):
-        if total_epochs <= w:
-            return float(epoch + 1) / float(total_epochs)
-        if epoch < w:
-            return float(epoch + 1) / float(w)
-        return 0.5 * (1.0 + math.cos(math.pi * (epoch - w) / float(total_epochs - w)))
-
-    scheduler = LambdaLR(optimizer, lr_fn)
-
-    total_loss, total_correct, total_samples = 0.0, 0, 0
-
-    for epoch in range(total_epochs):
-        for images, labels in dataloader:
-            images, labels = images.to(device), labels.to(device)
-
-            optimizer.zero_grad()
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-
-            # accumulate
-            bs = labels.size(0)
-            total_loss += loss.item() * bs
-            total_correct += outputs.argmax(1).eq(labels).sum().item()
-            total_samples += bs
-
-        scheduler.step()  # step at epoch end
-
-    avg_loss = total_loss / total_samples
-    accuracy = total_correct / total_samples
-
-    return model.state_dict(), avg_loss, accuracy
-
-
-# MASKS COMPUTED LOCALLY IN EACH CLIENT.
-def local_train_talos(
-    model,
+def local_train_with_mask(
+    model: nn.Module,
     dataloader,
-    epochs: int,
+    local_steps: int,
     lr: float,
     device: torch.device,
-    target_sparsity: float,
-    prune_rounds: int,
-    fisher_loader=None,
-    warmup_epochs: int = 5
+    global_masks: dict,
+    warmup_steps: int = 20,
 ):
     """
-    TALos‐style sparse fine-tuning for FL:
-      1) Compute Fisher scores per-parameter on fisher_loader (or dataloader).
-      2) Calibrate a binary mask to keep top (1 - target_sparsity) weights.
-      3) Apply the mask and fine-tune, re-applying the mask after each update.
-    Returns:
-        The pruned-and-fine-tuned state_dict.
+    Standard local training with in-place masking based on a precomputed cluster-level mask.
+    No pruning rounds, no TaLoS. Just apply the mask and keep it enforced.
     """
     model.to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
-    # Warm-up + Cosine scheduler setup
-    total_epochs = epochs
-    w = min(warmup_epochs, total_epochs)
+    if warmup_steps > 0:
+        def lr_lambda(step_idx):
+            return min((step_idx + 1) / float(warmup_steps), 1.0)
+        scheduler = LambdaLR(optimizer, lr_lambda)
+    else:
+        scheduler = None
 
-    def lr_fn(epoch):
-        if total_epochs <= w:
-            return float(epoch + 1) / float(total_epochs)
-        if epoch < w:
-            return float(epoch + 1) / float(w)
-        return 0.5 * (1.0 + math.cos(math.pi * (epoch - w) / float(total_epochs - w)))
+    if global_masks is None:
+        raise ValueError("Missing global_masks for cluster-based editing.")
 
-    scheduler = LambdaLR(optimizer, lr_fn)
+    masks = global_masks
 
-    # Compute Fisher scores
-    fl = fisher_loader or dataloader
-    fisher_scores = compute_fisher_scores(model, fl, criterion, device)
-
-    # Build and apply binary mask
-    masks = calibrate_mask(fisher_scores, target_sparsity, prune_rounds)
+    # Apply mask once before training
     with torch.no_grad():
         for name, param in model.named_parameters():
             if name in masks:
-                param.mul_(masks[name])
+                param.mul_(masks[name].to(param.device))
 
-    # Local fine-tuning with scheduler and mask enforcement
+    total_loss, total_correct, total_samples = 0.0, 0, 0
     model.train()
-    for epoch in range(total_epochs):
-        for x, y in dataloader:
-            x, y = x.to(device), y.to(device)
-            optimizer.zero_grad()
-            loss = criterion(model(x), y)
-            loss.backward()
-            optimizer.step()
+    infinite_loader = itertools.cycle(dataloader)
 
-            # re-apply mask to enforce sparsity
-            with torch.no_grad():
-                for name, param in model.named_parameters():
-                    if name in masks:
-                        param.mul_(masks[name])
+    for step in range(local_steps):
+        inputs, labels = next(infinite_loader)
+        inputs, labels = inputs.to(device), labels.to(device)
 
-        scheduler.step()
+        optimizer.zero_grad()
+        outputs = model(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
 
-    return model.state_dict()
+        if scheduler is not None:
+            scheduler.step()
+
+        # Re-apply mask after each step
+        with torch.no_grad():
+            for name, param in model.named_parameters():
+                if name in masks:
+                    param.mul_(masks[name].to(param.device))
+
+        total_loss += loss.item() * labels.size(0)
+        total_correct += outputs.argmax(1).eq(labels).sum().item()
+        total_samples += labels.size(0)
+
+    avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
+    accuracy = total_correct / total_samples if total_samples > 0 else 0.0
+
+    return model.state_dict(), avg_loss, accuracy
