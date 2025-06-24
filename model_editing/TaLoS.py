@@ -367,7 +367,7 @@ def calibrate_mask_global(
         ptr = 0
         for (_, sz), min_k in zip(shapes, layer_min_keep):
             seg = alive[ptr : ptr + sz]
-            if int(seg.sum()) <= min_k:
+            if int(seg.sum()) <= min_k + extra_alive:
                 keep_mask[ptr : ptr + sz] = False
             ptr += sz
         candidates = spare[keep_mask[spare]]
