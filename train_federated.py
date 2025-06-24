@@ -205,7 +205,7 @@ def main():
                 rounds=config.TALOS_PRUNE_ROUNDS,
                 random_fallback_frac = 0.1,
                 seed=config.seed,
-                min_keep_frac=0.5,
+                min_keep_frac=0.05,
                 strict_final=False
             )
             total = sum(m.numel() for m in shared_masks.values())
