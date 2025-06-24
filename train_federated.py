@@ -206,7 +206,7 @@ def main():
                 random_fallback_frac = 0.1,
                 seed=config.seed,
                 min_keep_frac=0.05,
-                strict_final=False
+                strict_final=True
             )
             total = sum(m.numel() for m in shared_masks.values())
             kept = sum(int(m.sum().item()) for m in shared_masks.values())
