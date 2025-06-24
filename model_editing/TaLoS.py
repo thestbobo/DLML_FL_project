@@ -272,7 +272,7 @@ def calibrate_mask_global(
     # ---------- NEW : per-layer safety floor --------------------------
     layer_min_keep = []
     for name, sz in shapes:
-        req = sz if is_whitelisted(name) else math.ceil(min_keep_frac * sz)
+        req = math.ceil(0.5 * sz) if is_whitelisted(name) else math.ceil(min_keep_frac * sz)
         layer_min_keep.append(req)
     min_total_keep = sum(layer_min_keep)
     if final_keep < min_total_keep:
