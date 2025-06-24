@@ -4,7 +4,7 @@
 
 wandb_project_folder: "Federated-DINO-ViT"         # Name of the project folder in wandb
 run_id: ""
-name: "global_mask_test_qk_ls"
+name: "global_mask_fix_acc&loss"
 seed: 42                                              # Random seed for reproducibility
 
 # --------------------------
