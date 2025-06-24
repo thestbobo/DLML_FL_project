@@ -344,7 +344,7 @@ def calibrate_mask_global(
         best = torch.topk(all_scores[dropped], need, largest=True).indices
         alive[dropped[best]] = True
 
-    # ---------- NEW : enforce per-layer floor -------------------------
+    # ---------- enforce per-layer floor -------------------------
     ptr = 0
     extra_alive = 0
     for (name, sz), min_k in zip(shapes, layer_min_keep):
@@ -374,6 +374,23 @@ def calibrate_mask_global(
         if candidates.numel() >= extra_alive:
             worst = torch.topk(all_scores[candidates], extra_alive, largest=False).indices
             alive[candidates[worst]] = False
+
+        # ---------- re-enforce per-layer floor post-strict_final -----------
+        ptr = 0
+        # ‘all_scores’, ‘shapes’ and ‘layer_min_keep’ are still in scope
+        for (name, sz), min_k in zip(shapes, layer_min_keep):
+            seg = alive[ptr: ptr + sz]
+            kept = int(seg.sum())
+            if kept < min_k:
+                need = min_k - kept
+                scores = all_scores[ptr: ptr + sz]
+                dead_idx = (~seg).nonzero(as_tuple=False).view(-1)
+                if dead_idx.numel():
+                    top = torch.topk(scores[dead_idx], need, largest=True).indices
+                    seg[dead_idx[top]] = True
+                    extra_alive += need
+            ptr += sz
+        # --------------------------------------------------------------
     # ------------------------------------------------------------------
 
     # 4) build hard 0/1 masks
