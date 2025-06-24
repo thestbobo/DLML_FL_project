@@ -225,6 +225,7 @@ it now bumps the global target of how many weights must survive in every layer i
 resurrects weights when a layer dropped below the floor,
 if strict_final=True, drops the same count elsewhere without violating any layer’s floor
 """
+
 def calibrate_mask_global(
     model: torch.nn.Module,
     calib_loader,
@@ -235,8 +236,8 @@ def calibrate_mask_global(
     random_fallback_frac: float = 0.1,
     seed: int = 42,
     *,
-    min_keep_frac: float = 0.05,      # <- NEW
-    strict_final: bool = False        # <- NEW (optional)
+    min_keep_frac: float = 0.05,
+    strict_final: bool = False        # set True if you want to set a strict target sparsity
 ):
     """
     Multi-round global TaLoS calibration.
