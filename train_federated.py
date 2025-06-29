@@ -188,6 +188,7 @@ def main():
             #     target_qk_sparsity=config.TALOS_TARGET_SPARSITY,
             #     max_rounds=R
             # )
+
             """ Build a layer‐wise Q/K float mask (keep least sensitive) """
             # shared_masks = calibrate_mask_layerwise_qk_ls(
             #     model=global_model,
@@ -196,6 +197,8 @@ def main():
             #     max_rounds=config.TALOS_PRUNE_ROUNDS
             # )
             #
+
+            """ Build a global mask (keep least sensitive) """
             shared_masks = calibrate_mask_global(
                 model=dummy,
                 calib_loader=calib_loader,
@@ -206,7 +209,7 @@ def main():
                 random_fallback_frac = 0.1,
                 seed=config.seed,
                 min_keep_frac=0.05,
-                strict_final=True
+                strict_final=False
             )
             total = sum(m.numel() for m in shared_masks.values())
             kept = sum(int(m.sum().item()) for m in shared_masks.values())
