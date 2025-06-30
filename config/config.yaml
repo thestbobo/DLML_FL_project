@@ -3,7 +3,7 @@
 # --------------------------
 
 wandb_project_folder: "Federated-DINO-ViT"         # Name of the project folder in wandb
-run_id: "NONIIDJ=16NC10"
+run_id: "hc4bcfg3"
 seed: 42                                              # Random seed for reproducibility
 
 # --------------------------
