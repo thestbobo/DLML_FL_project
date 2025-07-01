@@ -3,7 +3,7 @@
 # --------------------------
 
 wandb_project_folder: "Federated-DINO-ViT"         # Name of the project folder in wandb
-run_id: "hc4bcfg3"
+run_id: ""
 seed: 42                                              # Random seed for reproducibility
 
 # --------------------------
@@ -49,15 +49,15 @@ lora_target_modules:
 NUM_CLIENTS: 100
 CLIENT_FRACTION: 0.1   # 10% of clients selected each round
 LOCAL_EPOCHS: 0        # no longer used
-LOCAL_STEPS: 16
+LOCAL_STEPS: 4
 BATCH_SIZE: 64
 LR: 0.001
 LR_DECAY: 0.99        # per-round global lr decay factor
 WARMUP_EPOCHS: 1      # local warm-up scheduler
-ROUNDS: 50
+ROUNDS: 200
 IID: False  # Set to False for non-iid
 NC: 10  # Number of classes per client in non-iid setting
-CHECKPOINT_PATH: '/content/drive/MyDrive/DL_project/federated_checkpoints/fl_model_round_15.pth' # '/content/drive/MyDrive/DL_project/federated_checkpoints/fl_model_round_25.pth'            # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
+CHECKPOINT_PATH: '' # '/content/drive/MyDrive/DL_project/federated_checkpoints/fl_model_round_25.pth'            # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 OUT_CHECKPOINT_PATH: "/content/drive/MyDrive/DL_project/federated_checkpoints"
 FINETUNE_METHOD: 'dense'           # or "dense"
 
