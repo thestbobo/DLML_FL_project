@@ -136,15 +136,15 @@ def main():
             print("\n>>> Building a calibration loader over the FULL CIFAR-100 training set …")
             # concatenate all client splits.
             full_train_dataset = ConcatDataset(client_datasets)
-            calib_loader = DataLoader(
+            fisher_loader = DataLoader(
                 full_train_dataset,
-                batch_size=config.BATCH_SIZE,
+                batch_size=1,
                 shuffle=True,
                 num_workers=2,
                 pin_memory=True
             )
         else:
-            calib_loader = None
+            fisher_loader = None
 
         print("\n>>> Preparing shared Fisher + mask (TaLoS) …")
         if need_to_compute_mask:
@@ -153,7 +153,7 @@ def main():
             dummy = copy.deepcopy(global_model).to(device)
             dummy_criterion = torch.nn.CrossEntropyLoss()
 
-            fisher_scores = compute_fisher_scores(dummy, calib_loader, dummy_criterion, device)
+            fisher_scores = compute_fisher_scores(dummy, fisher_loader, dummy_criterion, device)
 
             # ----DEBUG----
             print(">>> Number of entries in fisher_scores:", len(fisher_scores))
@@ -201,7 +201,7 @@ def main():
             """ Build a global mask (keep least sensitive) """
             shared_masks = calibrate_mask_global(
                 model=dummy,
-                calib_loader=calib_loader,
+                calib_loader=fisher_loader,
                 criterion=dummy_criterion,
                 device=device,
                 target_sparsity=config.TALOS_TARGET_SPARSITY,
