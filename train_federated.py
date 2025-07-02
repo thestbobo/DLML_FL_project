@@ -136,6 +136,7 @@ def main():
             print("\n>>> Building a calibration loader over the FULL CIFAR-100 training set …")
             # concatenate all client splits.
             full_train_dataset = ConcatDataset(client_datasets)
+            """ Shuffle=True to reduce ordering bias and achieve a better gradient coverage"""
             fisher_loader = DataLoader(
                 full_train_dataset,
                 batch_size=1,
