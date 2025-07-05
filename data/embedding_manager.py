@@ -19,11 +19,18 @@ def save_embedding_splits(dataset_size, val_ratio=0.1, test_ratio=0.1, save_path
 
 def load_embeddings(model_name, split='train', embedding_dir='./data/embeddings', split_dir='./data/splits'):
     emb_path = f"{embedding_dir}/{model_name}_embeddings.pt"
-    idx_path = f"{split_dir}/{split}_idx.pt"
-
     emb = torch.load(emb_path)
+
+    # If embedding file already contains split, skip indexing
+    if emb.shape[0] < 50000:
+        print(f"[embedding_manager] Using pre-filtered embeddings for {model_name} ({emb.shape[0]} samples)")
+        return emb
+
+    # Otherwise apply split
+    idx_path = f"{split_dir}/{split}_idx.pt"
     idx = torch.load(idx_path)
     return emb[idx]
+
 
 
 
