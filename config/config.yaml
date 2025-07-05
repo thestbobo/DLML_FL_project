@@ -68,3 +68,14 @@ CALIBRATION_SPLIT: 0.1              # fraction for Fisher‐calibration (already
 
 MASKS_DIR: "/content/drive/MyDrive/DL_project/masks_cache"      # where to save Fisher scores & masks
 LOAD_MASK: ""       # "/content/drive/MyDrive/DL_project/masks_cache/xxx.pt"
+
+
+# embeddings
+
+paths:
+  embeddings_dir: "/content/drive/MyDrive/DL_project/UniversalEmbeddings/embeddings"
+  splits_dir: "/content/drive/MyDrive/DL_project/UniversalEmbeddings/splits"
+  checkpoints_dir: "/content/drive/MyDrive/DL_project/UniversalEmbeddings/checkpoints"
+  task_vectors_dir: "/content/drive/MyDrive/DL_project/UniversalEmbeddings/task_vectors"
+  aligned_vectors_dir: "/content/drive/MyDrive/DL_project/UniversalEmbeddings/task_vectors/aligned"
+  aggregated_vector_path: "/content/drive/MyDrive/DL_project/UniversalEmbeddings/task_vectors/aggregated.pt"
