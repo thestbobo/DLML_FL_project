@@ -1,10 +1,8 @@
 import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-
+sys.path.append(os.path.abspath(os.path.join(os.getcwd())))
 
 import yaml
-import os
 import torch
 from torchvision.datasets import CIFAR100
 from torch.utils.data import DataLoader, Subset
@@ -83,3 +81,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
