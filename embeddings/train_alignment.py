@@ -82,16 +82,24 @@ for epoch in range(num_epochs):
         opt_D.step()
 
         # === Train Generators ===
+        with torch.no_grad():
+            x1_to_x2_detached = x1_to_x2.detach()
+            x2_to_x1_detached = x2_to_x1.detach()
+
         opt_G.zero_grad()
+
         g_adv = (
-            adversarial_loss(D1(x2_to_x1), True) +
-            adversarial_loss(D2(x1_to_x2), True) +
-            adversarial_loss(DL1(t2), True) +
-            adversarial_loss(DL2(t1), True)
+                adversarial_loss(D1(x2_to_x1), True) +
+                adversarial_loss(D2(x1_to_x2), True) +
+                adversarial_loss(DL1(t2), True) +
+                adversarial_loss(DL2(t1), True)
         )
+
         rec = reconstruction_loss(x1, B1(t1)) + reconstruction_loss(x2, B2(t2))
-        cyc = cycle_consistency_loss(x1, B1(T(A2(x1_to_x2)))) + cycle_consistency_loss(x2, B2(T(A1(x2_to_x1))))
-        vsp = vector_space_preservation(x1, x1_to_x2) + vector_space_preservation(x2, x2_to_x1)
+        cyc = cycle_consistency_loss(x1, B1(T(A2(x1_to_x2_detached)))) + \
+              cycle_consistency_loss(x2, B2(T(A1(x2_to_x1_detached))))
+        vsp = vector_space_preservation(x1, x1_to_x2_detached) + \
+              vector_space_preservation(x2, x2_to_x1_detached)
 
         g_loss = g_adv + lambda_rec * rec + lambda_cc * cyc + lambda_vsp * vsp
         g_loss.backward()
