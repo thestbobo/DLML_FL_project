@@ -31,8 +31,13 @@ lambda_vsp = 1.0
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Load embeddings
-E1 = load_embeddings('dino', split='train')  # source domain
-E2 = load_embeddings('deit', split='train')  # target domain
+E1 = load_embeddings('dino', split='train',
+                     embedding_dir=cfg["paths"]["embeddings_dir"],
+                     split_dir=cfg["paths"]["splits_dir"])
+
+E2 = load_embeddings('deit', split='train',
+                     embedding_dir=cfg["paths"]["embeddings_dir"],
+                     split_dir=cfg["paths"]["splits_dir"])
 dataset = TensorDataset(E1, E2)
 loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
