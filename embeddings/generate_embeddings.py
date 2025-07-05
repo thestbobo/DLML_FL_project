@@ -39,7 +39,7 @@ split_files = ["train_idx.pt", "val_idx.pt", "test_idx.pt"]
 if not all(os.path.exists(os.path.join(cfg["paths"]["splits_dir"], f)) for f in split_files):
     print("[embeddings] Splits not found, generating...")
     train_idx, val_idx, test_idx = get_split_indices(len(dataset))
-    save_split_indices(train_idx, val_idx, test_idx)
+    save_split_indices(train_idx, val_idx, test_idx, save_dir=cfg["paths"]["splits_dir"])
     print(f"[embeddings] Splits saved to {cfg['paths']['splits_dir']}")
 else:
     print("[embeddings] Using existing splits")
