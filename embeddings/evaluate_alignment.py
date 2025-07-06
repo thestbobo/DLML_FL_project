@@ -36,6 +36,11 @@ E2 = load_embeddings('deit', split='test',
                      embedding_dir=cfg["paths"]["embeddings_dir"],
                      split_dir=cfg["paths"]["splits_dir"])
 
+# normalize embeddings
+E1 = F.normalize(E1, p=2, dim=1)
+E2 = F.normalize(E2, p=2, dim=1)
+
+
 loader = DataLoader(TensorDataset(E1, E2), batch_size=batch_size)
 print(f"[alignment] Loaded {len(E1)} test embedding pairs")
 

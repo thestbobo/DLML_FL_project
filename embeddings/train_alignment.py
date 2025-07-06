@@ -6,6 +6,7 @@ with open("config/config.yaml", "r") as f:
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
+import torch.nn.functional as F
 import os
 
 from embeddings.alignment_models.adapters import Adapter
@@ -54,6 +55,11 @@ E1 = load_embeddings('dino', split='train',
 E2 = load_embeddings('deit', split='train',
                      embedding_dir=cfg["paths"]["embeddings_dir"],
                      split_dir=cfg["paths"]["splits_dir"])
+
+# normalize embeddings
+E1 = F.normalize(E1, p=2, dim=1)
+E2 = F.normalize(E2, p=2, dim=1)
+
 dataset = TensorDataset(E1, E2)
 loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
