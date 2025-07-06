@@ -21,7 +21,6 @@ from project_utils.embedding_metrics import (
 from data.embedding_manager import load_embeddings
 from project_utils.embedding_metrics import log_alignment_losses
 
-
 with open("config/config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
 
@@ -43,6 +42,7 @@ lr = 1e-4
 lambda_rec = 1.0
 lambda_cc = 1.0
 lambda_vsp = 10
+lambda_cos = 1.0
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 wandb.init(
@@ -56,7 +56,8 @@ wandb.init(
         "lr": lr,
         "lambda_rec": lambda_rec,
         "lambda_cc": lambda_cc,
-        "lambda_vsp": lambda_vsp
+        "lambda_vsp": lambda_vsp,
+        "lambda_cos": lambda_cos
     }
 )
 
@@ -99,7 +100,6 @@ scheduler_D = CosineAnnealingLR(opt_D, T_max=num_epochs)
 
 # cosine loss function
 cosine_loss_fn = torch.nn.CosineEmbeddingLoss()
-lambda_cos = 1.0
 
 # Training loop
 for epoch in range(num_epochs):
@@ -149,7 +149,7 @@ for epoch in range(num_epochs):
               vector_space_preservation(x2, x2_to_x1.detach())
 
         target = torch.ones(x1.size(0), device=device)  # Label = 1 for similar pairs
-        cos_loss = cosine_loss_fn(x1_to_x2, x2) + cosine_loss_fn(x2_to_x1, x1)
+        cos_loss = cosine_loss_fn(x1_to_x2, x2, target) + cosine_loss_fn(x2_to_x1, x1, target)
 
         g_loss = g_adv + lambda_rec * rec + lambda_cc * cyc + lambda_vsp * vsp + lambda_cos * cos_loss
 
@@ -177,6 +177,5 @@ for epoch in range(num_epochs):
             'T': T.state_dict(),
             'B1': B1.state_dict(), 'B2': B2.state_dict()
         }, os.path.join(save_dir, f'vec2vec_epoch_{epoch+1}.pt'))
-
 
 wandb.finish()
