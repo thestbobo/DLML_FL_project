@@ -4,15 +4,27 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 import torch.nn.functional as F
 import wandb
+import random
+import numpy as np
 
 from embeddings.alignment_models.adapters import Adapter
 from embeddings.alignment_models.backbone import Backbone
 from data.embedding_manager import load_embeddings
 from project_utils.embedding_metrics import log_cosine_similarity
 
+
 # === Load config ===
 with open("config/config.yaml", "r") as f:
     cfg = yaml.safe_load(f)
+
+# reproducibility
+seed = cfg["seed"]
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 # === Config ===
 latent_dim = 512
