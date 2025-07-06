@@ -3,6 +3,7 @@ import os
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 import torch.nn.functional as F
+import wandb
 
 from embeddings.alignment_models.adapters import Adapter
 from embeddings.alignment_models.backbone import Backbone
@@ -20,9 +21,21 @@ batch_size = 128
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"[alignment] Using device: {device}")
 
+wandb.init(
+    project="embeddings_alignment_training",
+    name="alignment_eval",
+    config=cfg
+)
+
 # === Load test embeddings ===
-E1 = load_embeddings('dino', split='test')
-E2 = load_embeddings('deit', split='test')
+E1 = load_embeddings('dino', split='test',
+                     embedding_dir=cfg["paths"]["embeddings_dir"],
+                     split_dir=cfg["paths"]["splits_dir"])
+
+E2 = load_embeddings('deit', split='test',
+                     embedding_dir=cfg["paths"]["embeddings_dir"],
+                     split_dir=cfg["paths"]["splits_dir"])
+
 loader = DataLoader(TensorDataset(E1, E2), batch_size=batch_size)
 print(f"[alignment] Loaded {len(E1)} test embedding pairs")
 
