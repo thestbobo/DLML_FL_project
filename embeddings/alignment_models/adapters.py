@@ -10,8 +10,9 @@ class Adapter(nn.Module):
             nn.SiLU(),
             nn.Linear(latent_dim, latent_dim)
         )
+        self.dropout = nn.Dropout(p=0.1)  # Add this line
 
     def forward(self, x):
-        return self.model(x)
+        return self.dropout(self.model(x))
 
 
