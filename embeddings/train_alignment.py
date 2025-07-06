@@ -1,13 +1,13 @@
 import wandb
 import yaml
 import os
-with open("config/config.yaml", "r") as f:
-    cfg = yaml.safe_load(f)
-
 import torch
 from torch.utils.data import DataLoader, TensorDataset
+from torch.optim.lr_scheduler import CosineAnnealingLR
 import torch.nn.functional as F
 import os
+import random
+import numpy as np
 
 from embeddings.alignment_models.adapters import Adapter
 from embeddings.alignment_models.backbone import Backbone
@@ -21,15 +21,28 @@ from project_utils.embedding_metrics import (
 from data.embedding_manager import load_embeddings
 from project_utils.embedding_metrics import log_alignment_losses
 
+
+with open("config/config.yaml", "r") as f:
+    cfg = yaml.safe_load(f)
+
+# reproducibility
+seed = cfg["seed"]
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 # Configuration
 latent_dim = 512
 input_dim = 384
 batch_size = 128
-num_epochs = 100
+num_epochs = 200
 lr = 1e-4
 lambda_rec = 1.0
 lambda_cc = 1.0
-lambda_vsp = 1.0
+lambda_vsp = 10
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 wandb.init(
@@ -80,6 +93,14 @@ gen_params = list(A1.parameters()) + list(A2.parameters()) + list(T.parameters()
 opt_G = torch.optim.Adam(gen_params, lr=lr)
 opt_D = torch.optim.Adam(list(D1.parameters()) + list(D2.parameters()) + list(DL1.parameters()) + list(DL2.parameters()), lr=lr)
 
+# schedulers
+scheduler_G = CosineAnnealingLR(opt_G, T_max=num_epochs)
+scheduler_D = CosineAnnealingLR(opt_D, T_max=num_epochs)
+
+# cosine loss function
+cosine_loss_fn = torch.nn.CosineEmbeddingLoss()
+lambda_cos = 1.0
+
 # Training loop
 for epoch in range(num_epochs):
     for x1, x2 in loader:
@@ -103,6 +124,7 @@ for epoch in range(num_epochs):
         d_loss = d1_loss + d2_loss + dl1_loss + dl2_loss
         d_loss.backward()
         opt_D.step()
+        scheduler_D.step()
 
         # === === Forward for Generator === ===
         z1 = A1(x1)
@@ -126,9 +148,14 @@ for epoch in range(num_epochs):
         vsp = vector_space_preservation(x1, x1_to_x2.detach()) + \
               vector_space_preservation(x2, x2_to_x1.detach())
 
-        g_loss = g_adv + lambda_rec * rec + lambda_cc * cyc + lambda_vsp * vsp
+        target = torch.ones(x1.size(0), device=device)  # Label = 1 for similar pairs
+        cos_loss = cosine_loss_fn(x1_to_x2, x2) + cosine_loss_fn(x2_to_x1, x1)
+
+        g_loss = g_adv + lambda_rec * rec + lambda_cc * cyc + lambda_vsp * vsp + lambda_cos * cos_loss
+
         g_loss.backward()
         opt_G.step()
+        scheduler_G.step()
 
     # Logging
     log_alignment_losses({
@@ -136,7 +163,8 @@ for epoch in range(num_epochs):
         'd_loss': d_loss.item(),
         'rec_loss': rec.item(),
         'cyc_loss': cyc.item(),
-        'vsp_loss': vsp.item()
+        'vsp_loss': vsp.item(),
+        'cosine_loss': cos_loss.item()
     }, step=epoch)
 
     print(f"[Epoch {epoch+1}] Generator Loss: {g_loss.item():.4f} | Discriminator Loss: {d_loss.item():.4f}")
