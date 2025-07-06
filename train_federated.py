@@ -1,12 +1,13 @@
 import os
 import copy
+import time
 import numpy as np
 import torch
 import yaml
 import wandb
 from torch.utils.data import DataLoader, ConcatDataset, Subset
 import re
-from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_global, calibrate_mask_layerwise_qk
+from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_global, calibrate_mask_layerwise_qk, calibrate_mask_layerwise_qk_ls
 from models.dino_ViT_b16 import DINO_ViT
 from fl_core.client import local_train, local_train_talos
 from fl_core.server import average_weights_fedavg
@@ -94,7 +95,6 @@ def main():
     print(f"========== Federated Training Start ({mode}) ==========")
 
     starting_round = 0
-    best_test_accuracy = 0.0
     ckpt_path = config.CHECKPOINT_PATH
 
     # building model / loading existing one from config
@@ -134,24 +134,31 @@ def main():
         if need_to_compute_mask:
             print("\n>>> Building a calibration loader over the FULL CIFAR-100 training set …")
             # concatenate all client splits.
+            """ Shuffle=True to reduce ordering bias and achieve a better gradient coverage"""
             full_train_dataset = ConcatDataset(client_datasets)
-            calib_loader = DataLoader(
+            fisher_loader = DataLoader(
                 full_train_dataset,
-                batch_size=config.BATCH_SIZE,
+                batch_size=1,
                 shuffle=True,
                 num_workers=2,
                 pin_memory=True
             )
         else:
-            calib_loader = None
+            fisher_loader = None
 
         print("\n>>> Preparing shared Fisher + mask (TaLoS) …")
         if need_to_compute_mask:
+            # track the time it takes to calculate the fisher scores
+            fisher_timer_start = time.perf_counter()
+
             # Compute Fisher scores on the entire dataset
             dummy = copy.deepcopy(global_model).to(device)
             dummy_criterion = torch.nn.CrossEntropyLoss()
 
-            fisher_scores = compute_fisher_scores(dummy, calib_loader, dummy_criterion, device)
+            fisher_scores = compute_fisher_scores(dummy, fisher_loader, dummy_criterion, device)
+
+            fisher_timer_end = time.perf_counter()
+            wandb.config.fisher_runtime_min = (fisher_timer_end - fisher_timer_start) / 60
 
             # ----DEBUG----
             print(">>> Number of entries in fisher_scores:", len(fisher_scores))
@@ -174,26 +181,46 @@ def main():
 
             torch.save(fisher_scores, global_fisher_file)
 
-            # Calibrate the binary mask over multiple rounds
-            R = config.TALOS_PRUNE_ROUNDS
-            keep_ratio = 1.0 - config.TALOS_TARGET_SPARSITY
+            mask_timer_start = time.perf_counter()
 
-            # Build a layer‐wise Q/K float mask
+            """ Build a layer‐wise Q/K float mask (keep most sensitive) """
             # shared_masks = calibrate_mask_layerwise_qk(
             #     dummy,
             #     fisher_scores,
-            #     keep_ratio_per_block=keep_ratio,
+            #     keep_ratio_per_block=(1.0 - config.TALOS_TARGET_SPARSITY),
             #     target_qk_sparsity=config.TALOS_TARGET_SPARSITY,
-            #     max_rounds=R
+            #     max_rounds=config.TALOS_PRUNE_ROUNDS
             # )
+
+            """ Build a layer‐wise Q/K float mask (keep least sensitive) """
+            # shared_masks = calibrate_mask_layerwise_qk_ls(
+            #     model=global_model,
+            #     fisher_scores=fisher_scores,
+            #     target_qk_sparsity=config.TALOS_TARGET_SPARSITY,
+            #     max_rounds=config.TALOS_PRUNE_ROUNDS
+            # )
+
+
+            """ Build a global mask (keep least sensitive) """
             shared_masks = calibrate_mask_global(
                 model=dummy,
-                calib_loader=calib_loader,
+                calib_loader=fisher_loader,
                 criterion=dummy_criterion,
                 device=device,
                 target_sparsity=config.TALOS_TARGET_SPARSITY,
-                rounds=R
+                rounds=config.TALOS_PRUNE_ROUNDS,
+                random_fallback_frac=0.1,
+                seed=config.seed,
+                min_keep_frac=0.05,
+                strict_final=False
             )
+
+            mask_timer_end = time.perf_counter()
+            wandb.config.calibration_runtime_min = (mask_timer_start - mask_timer_end) / 60
+
+            total = sum(m.numel() for m in shared_masks.values())
+            kept = sum(int(m.sum().item()) for m in shared_masks.values())
+            print(f"[DEBUG] GLOBAL MASK → kept {kept}/{total} ≈ {100 * kept / total:.1f}% of all params")
 
             torch.save(shared_masks, global_mask_file)
             del dummy, fisher_scores
@@ -202,6 +229,10 @@ def main():
             # load pre-computed mask
             fisher_scores = torch.load(global_fisher_file, map_location=device)
             shared_masks = torch.load(global_mask_file, map_location=device)
+
+            total = sum(m.numel() for m in shared_masks.values())
+            kept = sum(int(m.sum().item()) for m in shared_masks.values())
+            print(f"[DEBUG] LOADED GLOBAL MASK WITH → kept {kept}/{total} ≈ {100 * kept / total:.1f}% of all params")
 
         print(
             f">>> Shared mask ready ({'loaded from' if not need_to_compute_mask else 'computed and saved to'}) → {masks_root}")
