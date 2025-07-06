@@ -1,3 +1,4 @@
+import wandb
 import yaml
 import os
 with open("config/config.yaml", "r") as f:
@@ -29,6 +30,21 @@ lambda_rec = 1.0
 lambda_cc = 1.0
 lambda_vsp = 1.0
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+wandb.init(
+    project="embeddings_alignment_training",
+    name=f"alignment_latent_{latent_dim}",
+    config={
+        "latent_dim": latent_dim,
+        "input_dim": input_dim,
+        "batch_size": batch_size,
+        "num_epochs": num_epochs,
+        "lr": lr,
+        "lambda_rec": lambda_rec,
+        "lambda_cc": lambda_cc,
+        "lambda_vsp": lambda_vsp
+    }
+)
 
 # Load embeddings
 E1 = load_embeddings('dino', split='train',
@@ -129,3 +145,4 @@ for epoch in range(num_epochs):
         }, os.path.join(save_dir, f'vec2vec_epoch_{epoch+1}.pt'))
 
 
+wandb.finish()
