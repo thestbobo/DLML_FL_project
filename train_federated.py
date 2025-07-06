@@ -216,7 +216,7 @@ def main():
             )
 
             mask_timer_end = time.perf_counter()
-            wandb.config.calibration_runtime_min = (mask_timer_start - mask_timer_end) / 60
+            wandb.config.mask_runtime_min = (mask_timer_start - mask_timer_end) / 60
 
             total = sum(m.numel() for m in shared_masks.values())
             kept = sum(int(m.sum().item()) for m in shared_masks.values())
