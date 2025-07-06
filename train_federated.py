@@ -106,24 +106,10 @@ def main():
     print("[INFO] Loading from checkpoint:", ckpt_path)
     print("[INFO] Exists?", os.path.exists(ckpt_path))
 
-    if ckpt_path and os.path.exists(ckpt_path):
-        print(f"[INFO] Loading checkpoint from {ckpt_path} …")
-        ckpt = torch.load(ckpt_path, map_location=device)
-        if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
-            method_ckpt = ckpt.get("finetuning_method", "").lower()
-            strict = (method_ckpt != "lora")
-            global_model.load_state_dict(ckpt["model_state_dict"], strict=strict)
-            starting_round = ckpt.get("round", 0)
-            best_test_accuracy = ckpt.get("test_metrics", {}).get("top_1_accuracy", 0.0)
-            print(f"[INFO] Resumed from round {starting_round} with best top-1 acc = {best_test_accuracy:.2%}")
-        else:
-            print("[WARN] Checkpoint is a pure state_dict. Loading weights only.")
-            global_model.load_state_dict(ckpt, strict=False)
-            match = re.search(r"round_(\d+)", ckpt_path)
-            starting_round = int(match.group(1)) if match else 0
-            print(f"[INFO] Resumed with state_dict only — starting from round {starting_round}")
-    else:
-        print("No valid checkpoint found; starting from scratch.")
+    optimizer = None  # Definisci qui se usi ottimizzatore
+    scheduler = None  # Idem per scheduler
+    starting_round = load_checkpoint(global_model, optimizer, scheduler, ckpt_path, config)
+
 
     # data prep
     client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.NC, config.seed)
@@ -179,7 +165,7 @@ def main():
             print(">>> [DEBUG] First 10 fisher_scores keys:", list(fisher_scores.keys())[:10], "\n")
             # --------------
 
-            torch.save(fisher_scores, global_fisher_file)
+            save_checkpoint(global_model, optimizer, scheduler, t_round, metrics, config, checkpoint_path)
 
             mask_timer_start = time.perf_counter()
 
