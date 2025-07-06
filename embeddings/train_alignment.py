@@ -63,7 +63,26 @@ for epoch in range(num_epochs):
     for x1, x2 in loader:
         x1, x2 = x1.to(device), x2.to(device)
 
-        # === Forward Pass ===
+        # === === Forward for Discriminator === ===
+        with torch.no_grad():
+            z1_d = A1(x1)
+            z2_d = A2(x2)
+            t1_d = T(z1_d)
+            t2_d = T(z2_d)
+            x1_to_x2_d = B2(t1_d)
+            x2_to_x1_d = B1(t2_d)
+
+        # === Train Discriminators ===
+        opt_D.zero_grad()
+        d1_loss = adversarial_loss(D1(x1), True) + adversarial_loss(D1(x2_to_x1_d.detach()), False)
+        d2_loss = adversarial_loss(D2(x2), True) + adversarial_loss(D2(x1_to_x2_d.detach()), False)
+        dl1_loss = adversarial_loss(DL1(z1_d), True) + adversarial_loss(DL1(t2_d.detach()), False)
+        dl2_loss = adversarial_loss(DL2(z2_d), True) + adversarial_loss(DL2(t1_d.detach()), False)
+        d_loss = d1_loss + d2_loss + dl1_loss + dl2_loss
+        d_loss.backward()
+        opt_D.step()
+
+        # === === Forward for Generator === ===
         z1 = A1(x1)
         z2 = A2(x2)
         t1 = T(z1)
@@ -71,35 +90,19 @@ for epoch in range(num_epochs):
         x1_to_x2 = B2(t1)
         x2_to_x1 = B1(t2)
 
-        # === Train Discriminators ===
-        opt_D.zero_grad()
-        d1_loss = adversarial_loss(D1(x1), True) + adversarial_loss(D1(x2_to_x1.detach()), False)
-        d2_loss = adversarial_loss(D2(x2), True) + adversarial_loss(D2(x1_to_x2.detach()), False)
-        dl1_loss = adversarial_loss(DL1(z1), True) + adversarial_loss(DL1(t2.detach()), False)
-        dl2_loss = adversarial_loss(DL2(z2), True) + adversarial_loss(DL2(t1.detach()), False)
-        d_loss = d1_loss + d2_loss + dl1_loss + dl2_loss
-        d_loss.backward()
-        opt_D.step()
-
         # === Train Generators ===
-        with torch.no_grad():
-            x1_to_x2_detached = x1_to_x2.detach()
-            x2_to_x1_detached = x2_to_x1.detach()
-
         opt_G.zero_grad()
-
         g_adv = (
-                adversarial_loss(D1(x2_to_x1), True) +
-                adversarial_loss(D2(x1_to_x2), True) +
-                adversarial_loss(DL1(t2), True) +
-                adversarial_loss(DL2(t1), True)
+            adversarial_loss(D1(x2_to_x1), True) +
+            adversarial_loss(D2(x1_to_x2), True) +
+            adversarial_loss(DL1(t2), True) +
+            adversarial_loss(DL2(t1), True)
         )
-
         rec = reconstruction_loss(x1, B1(t1)) + reconstruction_loss(x2, B2(t2))
-        cyc = cycle_consistency_loss(x1, B1(T(A2(x1_to_x2_detached)))) + \
-              cycle_consistency_loss(x2, B2(T(A1(x2_to_x1_detached))))
-        vsp = vector_space_preservation(x1, x1_to_x2_detached) + \
-              vector_space_preservation(x2, x2_to_x1_detached)
+        cyc = cycle_consistency_loss(x1, B1(T(A2(x1_to_x2.detach())))) + \
+              cycle_consistency_loss(x2, B2(T(A1(x2_to_x1.detach()))))
+        vsp = vector_space_preservation(x1, x1_to_x2.detach()) + \
+              vector_space_preservation(x2, x2_to_x1.detach())
 
         g_loss = g_adv + lambda_rec * rec + lambda_cc * cyc + lambda_vsp * vsp
         g_loss.backward()
@@ -124,4 +127,5 @@ for epoch in range(num_epochs):
             'T': T.state_dict(),
             'B1': B1.state_dict(), 'B2': B2.state_dict()
         }, os.path.join(save_dir, f'vec2vec_epoch_{epoch+1}.pt'))
+
 
