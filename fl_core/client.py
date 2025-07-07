@@ -6,11 +6,36 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
+import numpy as np
 
 from model_editing.TaLoS import calibrate_mask, compute_fisher_scores, calibrate_mask_layerwise_qk
 
+def register_cls_hook_and_extract(model, probe_batch, device, save_path):
+    """
+    Registra un hook su blocks.11 per estrarre il token [CLS] su un batch fisso.
+    Salva l'output in .npy nel path specificato.
+    """
+    activations = {}
 
-def local_train_epochs(model, dataloader, epochs, lr, device, warmup_epochs=5):
+    def hook_fn(module, input, output):
+        cls_token = output[:, 0, :]  # (B, D)
+        activations['cls'] = cls_token.detach().cpu().numpy()
+
+    # Hook su blocks.11
+    handle = model.blocks[11].register_forward_hook(hook_fn)
+
+    model.eval()
+    with torch.no_grad():
+        _ = model(probe_batch.to(device))
+
+    handle.remove()
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    np.save(save_path, activations['cls'])
+    print(f"[HOOK] Salvata rappresentazione CLS in {save_path}")
+
+
+def local_train_epochs(model, dataloader, epochs, lr, device, warmup_epochs=5, probe_batch: torch.Tensor = None, save_path: str = None):
     model.to(device)
     model.train()
 
@@ -31,6 +56,10 @@ def local_train_epochs(model, dataloader, epochs, lr, device, warmup_epochs=5):
     scheduler = LambdaLR(optimizer, lr_fn)
 
     total_loss, total_correct, total_samples = 0.0, 0, 0
+
+    # === EXTRA: salvataggio rappresentazioni prima del training ===
+    if probe_batch is not None and save_path is not None:
+        register_cls_hook_and_extract(model, probe_batch, device, save_path)
 
     for epoch in range(total_epochs):
         for images, labels in dataloader:
@@ -68,6 +97,8 @@ def local_train_talos_epochs(
     masks_dir: str,
     global_masks: dict = None,
     warmup_epochs: int = 5,
+    probe_batch: torch.Tensor = None,
+    save_path: str = None,
 ):
     """
     If `global_masks` is provided, reuse it.
@@ -125,6 +156,9 @@ def local_train_talos_epochs(
     total_samples = 0
     model.train()
 
+    if probe_batch is not None and save_path is not None:
+        register_cls_hook_and_extract(model, probe_batch, device, save_path)
+
     for epoch_idx in range(total_epochs):
         for inputs, labels in dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
@@ -161,70 +195,6 @@ def local_train_talos_epochs(
     return model.state_dict(), avg_loss, accuracy, global_sparsity, masks
 
 
-def local_train(
-    model: nn.Module,
-    dataloader,
-    local_steps: int,
-    lr: float,
-    device: torch.device,
-    warmup_steps: int = 20,
-):
-    """
-    Dense local training for exactly 'local_steps' optimizer updates.
-    Args:
-        model:         The PyTorch model to train.
-        dataloader:    DataLoader over this client's dataset.
-        local_steps:   Number of optimizer.step() calls to perform.
-        lr:            Initial learning rate.
-        device:        torch.device.
-        warmup_steps:  Number of steps to linearly warm up (optional).
-    Returns:
-        (state_dict, avg_loss, accuracy)
-    """
-    model.to(device)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
-
-    # Step‐based warmup scheduler (linear ramp for `warmup_steps` steps)
-    if warmup_steps > 0:
-        def lr_lambda(step_idx):
-            return min((step_idx + 1) / float(warmup_steps), 1.0)
-        scheduler = LambdaLR(optimizer, lr_lambda)
-    else:
-        scheduler = None
-
-    total_loss = 0.0
-    total_correct = 0
-    total_samples = 0
-    model.train()
-
-    # Create an infinite cycling iterator over the DataLoader (for steps)
-    infinite_loader = itertools.cycle(dataloader)
-
-    for step in range(local_steps):
-        inputs, labels = next(infinite_loader)
-        inputs, labels = inputs.to(device), labels.to(device)
-
-        optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-
-        if scheduler is not None:
-            scheduler.step()
-
-        # Accumulate metrics
-        total_loss += loss.item() * labels.size(0)
-        total_correct += outputs.argmax(1).eq(labels).sum().item()
-        total_samples += labels.size(0)
-
-    avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
-    accuracy = total_correct / total_samples if total_samples > 0 else 0.0
-
-    return model.state_dict(), avg_loss, accuracy
-
-
 def local_train_talos(
     model: nn.Module,
     dataloader,
@@ -236,6 +206,8 @@ def local_train_talos(
     masks_dir: str,
     global_masks: dict = None,
     warmup_steps: int = 20,  # optional, step‐based warmup
+    probe_batch: torch.Tensor = None,
+    save_path: str = None
 ):
     """
     TaLoS local training for exactly 'local_steps' optimizer updates:
@@ -321,6 +293,10 @@ def local_train_talos(
     # Infinite DataLoader for steps
     infinite_loader = itertools.cycle(dataloader)
 
+    if probe_batch is not None and save_path is not None:
+        register_cls_hook_and_extract(model, probe_batch, device, save_path)
+
+
     for step in range(local_steps):
         inputs, labels = next(infinite_loader)
         inputs, labels = inputs.to(device), labels.to(device)
@@ -357,3 +333,73 @@ def local_train_talos(
     global_sparsity = 1.0 - (kept_params / total_params) if total_params > 0 else 0.0
 
     return model.state_dict(), avg_loss, accuracy, global_sparsity, masks
+
+
+def local_train(
+    model: nn.Module,
+    dataloader,
+    local_steps: int,
+    lr: float,
+    device: torch.device,
+    warmup_steps: int = 20,
+    probe_batch: torch.Tensor = None,
+    save_path: str = None,
+):
+    """
+    Dense local training for exactly 'local_steps' optimizer updates.
+    Args:
+        model:         The PyTorch model to train.
+        dataloader:    DataLoader over this client's dataset.
+        local_steps:   Number of optimizer.step() calls to perform.
+        lr:            Initial learning rate.
+        device:        torch.device.
+        warmup_steps:  Number of steps to linearly warm up (optional).
+    Returns:
+        (state_dict, avg_loss, accuracy)
+    """
+    model.to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+
+    # Step‐based warmup scheduler (linear ramp for `warmup_steps` steps)
+    if warmup_steps > 0:
+        def lr_lambda(step_idx):
+            return min((step_idx + 1) / float(warmup_steps), 1.0)
+        scheduler = LambdaLR(optimizer, lr_lambda)
+    else:
+        scheduler = None
+
+    total_loss = 0.0
+    total_correct = 0
+    total_samples = 0
+    model.train()
+
+    # Create an infinite cycling iterator over the DataLoader (for steps)
+    infinite_loader = itertools.cycle(dataloader)
+
+    if probe_batch is not None and save_path is not None:
+        register_cls_hook_and_extract(model, probe_batch, device, save_path)
+
+
+    for step in range(local_steps):
+        inputs, labels = next(infinite_loader)
+        inputs, labels = inputs.to(device), labels.to(device)
+
+        optimizer.zero_grad()
+        outputs = model(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+        if scheduler is not None:
+            scheduler.step()
+
+        # Accumulate metrics
+        total_loss += loss.item() * labels.size(0)
+        total_correct += outputs.argmax(1).eq(labels).sum().item()
+        total_samples += labels.size(0)
+
+    avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
+    accuracy = total_correct / total_samples if total_samples > 0 else 0.0
+
+    return model.state_dict(), avg_loss, accuracy

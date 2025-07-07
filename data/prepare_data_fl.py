@@ -6,6 +6,21 @@ import random
 
 from torchvision.datasets import CIFAR100
 
+def get_fixed_probe_batch(n_samples=100, seed=42, device='cpu'):
+    # 1. Carica il test set completo
+    test_transform = get_transform()
+    test_data = CIFAR100(root="./data", train=False, download=True, transform=test_transform)
+    l = len(test_data)
+
+    # 2. Estrai un sottoinsieme fisso (es. 100 immagini)
+    random.seed(seed)
+    subset_idxs = random.sample(range(len(test_data)), n_samples)
+    probe_subset = Subset(test_data, subset_idxs)
+
+    # 3. Loader per un singolo batch
+    probe_loader = DataLoader(probe_subset, batch_size=n_samples, shuffle=False)
+    images, _ = next(iter(probe_loader))
+    return images.to(device), l  # Shape: (n_samples, C, H, W)
 
 def get_transform():
     return transforms.Compose([
@@ -19,6 +34,7 @@ def get_transform():
 def load_cifar100(root="./data"):
     transform = get_transform()
     return datasets.CIFAR100(root=root, train=True, download=True, transform=transform)
+
 
 
 def get_client_datasets(iid, num_clients, nc, seed=42):

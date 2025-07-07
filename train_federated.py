@@ -1,9 +1,13 @@
 import os
 import copy
 import time
+import random
+
 import numpy as np
 import torch
 import yaml
+from setuptools.sandbox import save_path
+
 import wandb
 from torch.utils.data import DataLoader, ConcatDataset, Subset
 import re
@@ -11,7 +15,7 @@ from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_global, ca
 from models.dino_ViT_b16 import DINO_ViT
 from fl_core.client import local_train, local_train_talos
 from fl_core.server import average_weights_fedavg
-from data.prepare_data_fl import get_client_datasets, get_test_loader
+from data.prepare_data_fl import get_client_datasets, get_test_loader, get_fixed_probe_batch
 from project_utils.metrics import get_metrics
 from project_utils.federated_metrics import (
     log_global_weight_diff,
@@ -283,6 +287,19 @@ def main():
             initial_weights = copy.deepcopy(local_model.state_dict())
             method = config.FINETUNE_METHOD.lower()
 
+            print("Debug print: before calculating things")
+
+            len_probe_batch = get_fixed_probe_batch(n_samples=100, device=device)[1]
+
+            print("Debug print2: before calculating things")
+
+            subset_idxs = random.sample(range(len_probe_batch), 100)
+            probe_batch = get_fixed_probe_batch(n_samples=100, device=device)[0]
+            fixed_probe_batch = next(iter(probe_batch)) # solo immagini
+
+            print("Debug print2: before calculating things")
+
+
             if method == "dense":
                 w, avg_loss, acc = local_train(
                     local_model,
@@ -290,7 +307,9 @@ def main():
                     local_steps=config.LOCAL_STEPS,
                     lr=lr_round,
                     device=device,
-                    warmup_steps=warmup_eps * (cnt // config.BATCH_SIZE)
+                    warmup_steps=warmup_eps * (cnt // config.BATCH_SIZE),
+                    probe_batch = probe_batch,
+                    save_path = config.REPRESENTATIONS_PATH
                 )
                 sparsity = None
                 masks = None
@@ -307,7 +326,9 @@ def main():
                     prune_rounds=config.TALOS_PRUNE_ROUNDS,
                     masks_dir=masks_root,  # pass the same root where we saved global_mask
                     global_masks=shared_masks,  # force‐use the precomputed global mask
-                    warmup_steps=warmup_eps * (cnt // config.BATCH_SIZE)
+                    warmup_steps=warmup_eps * (cnt // config.BATCH_SIZE),
+                    probe_batch = probe_batch,
+                    save_path = config.REPRESENTATIONS_PATH
                 )
 
                 # Compute QKV sparsity (for logging) by counting mask entries under "attn.qkv"

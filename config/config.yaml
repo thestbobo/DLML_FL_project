@@ -68,3 +68,4 @@ CALIBRATION_SPLIT: 0.1              # fraction for Fisher‐calibration (already
 
 MASKS_DIR: "/content/drive/MyDrive/DL_project/masks_cache"      # where to save Fisher scores & masks
 LOAD_MASK: ""       # "/content/drive/MyDrive/DL_project/masks_cache/xxx.pt"
+REPRESENTATIONS_PATH: "/content/drive/MyDrive/DL_project/representations"
