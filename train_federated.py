@@ -301,6 +301,8 @@ def main():
                 min(num_repr_clients, len(selected_clients)),
                 replace=False
             ))
+            probe_loader = get_test_loader(batch_size=config.BATCH_SIZE)
+            x_probe, _ = next(iter(probe_loader))  # reuse this for all selected clients
 
         # Log aggregated class distribution every 5 rounds
         if t_round % 5 == 0:
@@ -338,8 +340,6 @@ def main():
                         label_counter[label] = label_counter.get(label, 0) + 1
 
                     def extract_fn(model_ref=local_model, client_id=cid, round_id=t_round):
-                        probe_loader = get_test_loader(batch_size=config.BATCH_SIZE)
-                        x_probe, _ = next(iter(probe_loader))
                         reps = get_intermediate_representation(model_ref, x_probe, repr_layers, device)
                         save_representations(reps, repr_path, client_id, round_id, class_counts=label_counter)
 
