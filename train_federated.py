@@ -147,13 +147,13 @@ def main():
         else:
             fisher_loader = None
 
-        print("\n>>> Preparing shared Fisher + mask (TaLoS) …")
+
         if need_to_compute_mask:
             start = time.perf_counter()
             # Compute Fisher scores on the entire dataset
             dummy = copy.deepcopy(global_model).to(device)
             dummy_criterion = torch.nn.CrossEntropyLoss()
-
+            print("\n>>> Preparing shared Fisher")
             fisher_scores = compute_fisher_scores(dummy, fisher_loader, dummy_criterion, device)
 
             # ----DEBUG----
@@ -199,6 +199,7 @@ def main():
             # )
             #
 
+            print("\n>>> Preparing mask (TaLoS) …")
             """ Build a global mask (keep least sensitive) """
             shared_masks = calibrate_mask_global(
                 model=dummy,
