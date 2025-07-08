@@ -68,4 +68,12 @@ CALIBRATION_SPLIT: 0.1              # fraction for Fisher‐calibration (already
 
 MASKS_DIR: "/content/drive/MyDrive/DL_project/masks_cache"      # where to save Fisher scores & masks
 LOAD_MASK: ""       # "/content/drive/MyDrive/DL_project/masks_cache/xxx.pt"
-REPRESENTATIONS_PATH: "/content/drive/MyDrive/DL_project/representations"
+
+# representations extraction
+REPRESENTATION_FREQ: 5  # how often to extract representations (every n-th round)
+REPRESENTATION_LAYERS:
+  - model.blocks.3.attn.qkv       # Mid-layer attention projection (semantic structure)
+  - model.blocks.6.mlp.fc2        # Mid-layer MLP output (transformed tokens)
+  - model.blocks.11.attn.qkv      # Final attention head (global semantic attention)
+
+REPRESENTATIONS_PATH: "/content/drive/MyDrive/DL_project/representations"  # where to save representations

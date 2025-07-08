@@ -1,13 +1,9 @@
 import os
 import copy
 import time
-import random
-
 import numpy as np
 import torch
 import yaml
-from setuptools.sandbox import save_path
-
 import wandb
 from torch.utils.data import DataLoader, ConcatDataset, Subset
 import re
@@ -15,7 +11,7 @@ from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_global, ca
 from models.dino_ViT_b16 import DINO_ViT
 from fl_core.client import local_train, local_train_talos
 from fl_core.server import average_weights_fedavg
-from data.prepare_data_fl import get_client_datasets, get_test_loader, get_fixed_probe_batch
+from data.prepare_data_fl import get_client_datasets, get_test_loader
 from project_utils.metrics import get_metrics
 from project_utils.federated_metrics import (
     log_global_weight_diff,
@@ -24,6 +20,8 @@ from project_utils.federated_metrics import (
     log_global_metrics,
     log_client_metrics,
 )
+from representations.representations_manager import get_intermediate_representation, save_representations
+
 
 
 def evaluate(model, dataloader):
@@ -51,6 +49,52 @@ def evaluate(model, dataloader):
     metrics["global_loss"] = avg_loss
 
     return metrics
+
+def save_checkpoint(model, optimizer, scheduler, round_num, metrics, config, path):
+    torch.save({
+        "round": round_num,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict() if optimizer else None,
+        "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
+        "test_metrics": metrics,
+        "finetuning_method": config.FINETUNE_METHOD,
+        "seed": config.seed,
+        "np_seed": np.random.get_state()
+    }, path)
+    print(f"[INFO] Saved checkpoint to {path}")
+
+
+def load_checkpoint(model, optimizer, scheduler, path, config):
+    if not os.path.exists(path):
+        print("[WARN] No checkpoint found.")
+        return 0  # start from scratch
+
+    print(f"[INFO] Loading checkpoint from {path} …")
+    ckpt = torch.load(path, map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+
+    if "model_state_dict" not in ckpt:
+        print("[WARN] Checkpoint is a pure state_dict. Loading only weights.")
+        model.load_state_dict(ckpt, strict=False)
+        match = re.search(r"round_(\\d+)", path)
+        return int(match.group(1)) if match else 0
+
+    model.load_state_dict(ckpt["model_state_dict"])
+
+    if optimizer and ckpt.get("optimizer_state_dict"):
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+    if scheduler and ckpt.get("scheduler_state_dict"):
+        scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+
+    seed = ckpt.get("seed", config.seed)
+    np_seed = ckpt.get("np_seed", None)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if np_seed:
+        np.random.set_state(np_seed)
+
+    print(f"[INFO] Resumed from round {ckpt['round']} with top-1 acc = {ckpt.get('test_metrics', {}).get('top_1_accuracy', 0.0):.2%}")
+    return ckpt["round"]
+
 
 
 def main():
@@ -110,24 +154,10 @@ def main():
     print("[INFO] Loading from checkpoint:", ckpt_path)
     print("[INFO] Exists?", os.path.exists(ckpt_path))
 
-    if ckpt_path and os.path.exists(ckpt_path):
-        print(f"[INFO] Loading checkpoint from {ckpt_path} …")
-        ckpt = torch.load(ckpt_path, map_location=device)
-        if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
-            method_ckpt = ckpt.get("finetuning_method", "").lower()
-            strict = (method_ckpt != "lora")
-            global_model.load_state_dict(ckpt["model_state_dict"], strict=strict)
-            starting_round = ckpt.get("round", 0)
-            best_test_accuracy = ckpt.get("test_metrics", {}).get("top_1_accuracy", 0.0)
-            print(f"[INFO] Resumed from round {starting_round} with best top-1 acc = {best_test_accuracy:.2%}")
-        else:
-            print("[WARN] Checkpoint is a pure state_dict. Loading weights only.")
-            global_model.load_state_dict(ckpt, strict=False)
-            match = re.search(r"round_(\d+)", ckpt_path)
-            starting_round = int(match.group(1)) if match else 0
-            print(f"[INFO] Resumed with state_dict only — starting from round {starting_round}")
-    else:
-        print("No valid checkpoint found; starting from scratch.")
+    optimizer = None  # Definisci qui se usi ottimizzatore
+    scheduler = None  # Idem per scheduler
+    starting_round = load_checkpoint(global_model, optimizer, scheduler, ckpt_path, config)
+
 
     # data prep
     client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.NC, config.seed)
@@ -183,7 +213,6 @@ def main():
             print(">>> [DEBUG] First 10 fisher_scores keys:", list(fisher_scores.keys())[:10], "\n")
             # --------------
 
-            torch.save(fisher_scores, global_fisher_file)
 
             mask_timer_start = time.perf_counter()
 
@@ -250,6 +279,11 @@ def main():
     decay = config.LR_DECAY
     warmup_eps = config.WARMUP_EPOCHS
 
+    # representations extraction setup
+    extract_every_n_rounds = config.REPRESENTATION_FREQ
+    repr_layers = config.REPRESENTATION_LAYERS  # list like ['model.blocks.3', 'model.blocks.6']
+    repr_path = config.REPRESENTATIONS_PATH
+
     # federated loop
     for t_round in range(starting_round + 1, config.ROUNDS + 1):
         print(f"\n--- Round {t_round} ---")
@@ -283,22 +317,27 @@ def main():
                 pin_memory=True
             )
 
+            # extract representations every `extract_every_n_rounds`
+            extract_fn = None
+            if t_round % extract_every_n_rounds == 0:
+                # compute class distribution for this client (optional)
+                label_counter = {}
+                for _, label in client_datasets[cid]:
+                    label = label.item()
+                    label_counter[label] = label_counter.get(label, 0) + 1
+
+                def extract_fn(model_ref=local_model, client_id=cid, round_id=t_round):
+                    probe_loader = get_test_loader(batch_size=config.BATCH_SIZE)
+                    x_probe, _ = next(iter(probe_loader))
+                    reps = get_intermediate_representation(model_ref, x_probe, repr_layers, device)
+                    save_representations(reps, repr_path, client_id, round_id, class_counts=label_counter)
+
+                print(f"[REPRESENTATIONS] Scheduled extraction for Client {cid} at Round {t_round}")
+                print(f"[REPRESENTATIONS] Client {cid} class distribution: {label_counter}")
+
             # Keep track of initial weights to log weight‐delta (L2)
             initial_weights = copy.deepcopy(local_model.state_dict())
             method = config.FINETUNE_METHOD.lower()
-
-            print("Debug print: before calculating things")
-
-            len_probe_batch = get_fixed_probe_batch(n_samples=100, device=device)[1]
-
-            print("Debug print2: before calculating things")
-
-            subset_idxs = random.sample(range(len_probe_batch), 100)
-            probe_batch = get_fixed_probe_batch(n_samples=100, device=device)[0]
-            fixed_probe_batch = next(iter(probe_batch)) # solo immagini
-
-            print("Debug print2: before calculating things")
-
 
             if method == "dense":
                 w, avg_loss, acc = local_train(
@@ -308,8 +347,7 @@ def main():
                     lr=lr_round,
                     device=device,
                     warmup_steps=warmup_eps * (cnt // config.BATCH_SIZE),
-                    probe_batch = probe_batch,
-                    save_path = config.REPRESENTATIONS_PATH
+                    extract_repr_fn = extract_fn
                 )
                 sparsity = None
                 masks = None
@@ -327,8 +365,7 @@ def main():
                     masks_dir=masks_root,  # pass the same root where we saved global_mask
                     global_masks=shared_masks,  # force‐use the precomputed global mask
                     warmup_steps=warmup_eps * (cnt // config.BATCH_SIZE),
-                    probe_batch = probe_batch,
-                    save_path = config.REPRESENTATIONS_PATH
+                    extract_repr_fn=extract_fn
                 )
 
                 # Compute QKV sparsity (for logging) by counting mask entries under "attn.qkv"
