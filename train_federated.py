@@ -84,7 +84,7 @@ def main():
             need_to_compute_mask = True
 
         global_fisher_file = os.path.join(masks_root, "fisher_global.pt")
-        global_mask_file = os.path.join(masks_root, "mask_global.pt")
+        global_mask_file = None
     else:
         masks_root = None
         need_to_compute_mask = False
@@ -148,13 +148,13 @@ def main():
             fisher_loader = None
 
 
-        if need_to_compute_mask:
+        if global_mask_file is None:
             start = time.perf_counter()
             # Compute Fisher scores on the entire dataset
             dummy = copy.deepcopy(global_model).to(device)
             dummy_criterion = torch.nn.CrossEntropyLoss()
             print("\n>>> Preparing shared Fisher")
-            fisher_scores = compute_fisher_scores(dummy, fisher_loader, dummy_criterion, device)
+            fisher_scores = torch.load(global_fisher_file, map_location=device)
 
             # ----DEBUG----
             print(">>> Number of entries in fisher_scores:", len(fisher_scores))
