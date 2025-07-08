@@ -330,12 +330,12 @@ def main():
 
             # extract representations every `extract_every_n_rounds`
             extract_fn = None
-            if t_round % extract_every_n_rounds == 0:
+            if t_round % extract_every_n_rounds == 0 or t_round == config.ROUNDS:
                 # compute class distribution for this client (optional)
                 if cid in clients_to_extract:
                     label_counter = {}
                     for _, label in client_datasets[cid]:
-                        label = label.item()
+                        lbl = label.item() if isinstance(label, torch.Tensor) else label
                         label_counter[label] = label_counter.get(label, 0) + 1
 
                     def extract_fn(model_ref=local_model, client_id=cid, round_id=t_round):
