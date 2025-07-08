@@ -17,6 +17,7 @@ from model_editing.LoRA import LoraConfig, apply_lora, get_lora_params
 from models.dino_ViT_b16 import DINO_ViT
 from data.prepare_data import get_cifar100_loaders, get_sparse_loaders
 from project_utils.metrics import get_metrics
+from project_utils.scheduler import get_scheduler
 
 
 def set_seed(seed):
@@ -213,19 +214,8 @@ def main():
     else:
         raise ValueError(f"Unknown finetuning_method: {config.finetuning_method}")
 
-    # Rebuild scheduler on new optimizer
-    warmup = LinearLR(optimizer, start_factor=0.01, total_iters=5)
-    cosine = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
-    scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
-
-    if config.finetuning_method == "lora":
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer,
-            mode="min",
-            factor=0.5,  # dimezza il LR
-            patience=3,  # aspetta 3 epoche di plateau
-            verbose=True
-        )
+    scheduler = get_scheduler(optimizer, config)
+    
     # CHECKPOINT LOADING FOR MODEL WEIGHTS (optional: must be enabled in config.yaml):
     starting_epoch = 0
     best_val_accuracy = 0.0
@@ -261,11 +251,13 @@ def main():
                                                     verbose=True)
         val_loss, val_metrics = validate(model, val_loader, criterion, device, verbose=True)
 
-        # debugging lora
-        if config.finetuning_method == "lora":
-            scheduler.step(val_loss)
-        else:
-            scheduler.step()
+
+        if scheduler is not None:
+            if config.scheduler_type == "plateau":
+                scheduler.step(val_loss)
+            else:
+                scheduler.step()
+
 
         print(
             f"Epoch {epoch + 1}/{config.epochs} | Train Loss: {train_loss:.4f} | Train Metrics: {train_metrics} | "

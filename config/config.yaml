@@ -22,6 +22,8 @@ checkpoint_path: '/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pt
 out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
 # when loading a checkpoint, initialize wandb with run_id and resume="must"
 finetuning_method: "dense"                             # fine-tuning method switch -> "dense" / "lora" / "talos"
+scheduler_type: "cosine"  # Options: "cosine", "plateau", "step", "lambda", "none"
+lambda_decay_rate: 0.95
 
 # talos fine-tuning (centralized)
 nesterov: False                         # enable nesterov acceleration
