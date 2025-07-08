@@ -68,28 +68,10 @@ def main():
 
     method = config.FINETUNE_METHOD.lower()
 
-    # TaLoS only -> manage mask cache paths
-    if method == "talos":
-        # pre-computed mask upload from config
-        if config.LOAD_MASK:
-            masks_root = config.LOAD_MASK
-            os.makedirs(masks_root, exist_ok=True)
-            print(f">>> Loading precomputed mask from: {masks_root}")
-            need_to_compute_mask = False
-        else:
-            # No pre‐computed mask: we will compute it from scratch & save under ./masks_run
-            masks_root = config.MASKS_DIR
-            os.makedirs(masks_root, exist_ok=True)
-            print(f">>> No LOAD_MASK set; computing new mask and storing under: {masks_root}")
-            need_to_compute_mask = True
-
-        global_fisher_file = os.path.join(masks_root, "fisher_global.pt")
-        global_mask_file = None
-    else:
-        masks_root = None
-        need_to_compute_mask = False
-        global_fisher_file = None
-        global_mask_file = None
+    masks_root = config.LOAD_MASK
+    need_to_compute_mask = True
+    global_fisher_file = os.path.join(config.LOAD_MASK, "fisher_global.pt")
+    global_mask_file = None
 
     mode = "IID" if config.IID else f"Non-IID Nc={config.NC}"
     print(f"========== Federated Training Start ({mode}) ==========")
