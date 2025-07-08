@@ -119,20 +119,21 @@ def main():
     # TaLoS only -> manage mask cache paths
     if method == "talos":
         # pre-computed mask upload from config
-        if config.LOAD_MASK:
-            masks_root = config.LOAD_MASK
-            os.makedirs(masks_root, exist_ok=True)
-            print(f">>> Loading precomputed mask from: {masks_root}")
-            need_to_compute_mask = False
-        else:
-            # No pre‐computed mask: we will compute it from scratch & save under ./masks_run
-            masks_root = config.MASKS_DIR
-            os.makedirs(masks_root, exist_ok=True)
-            print(f">>> No LOAD_MASK set; computing new mask and storing under: {masks_root}")
-            need_to_compute_mask = True
+        if method == "talos":
+            if config.LOAD_MASK:
+                global_mask_file = config.LOAD_MASK
+                masks_root = os.path.dirname(global_mask_file)
+                os.makedirs(masks_root, exist_ok=True)
+                print(f">>> Loading precomputed mask from: {global_mask_file}")
+                need_to_compute_mask = False
+            else:
+                masks_root = config.MASKS_DIR
+                os.makedirs(masks_root, exist_ok=True)
+                print(f">>> No LOAD_MASK set; computing new mask and storing under: {masks_root}")
+                need_to_compute_mask = True
+                global_mask_file = os.path.join(masks_root, "mask_global.pt")
 
-        global_fisher_file = os.path.join(masks_root, "fisher_global.pt")
-        global_mask_file = os.path.join(masks_root, "mask_global.pt")
+            global_fisher_file = os.path.join(masks_root, "fisher_global.pt")
     else:
         masks_root = None
         need_to_compute_mask = False
