@@ -323,8 +323,10 @@ def calibrate_mask_global(
                 soft = seg + (1.0 - seg) * 0.1
                 param.data.view(-1).copy_(orig[name].view(-1).to(device) * soft)
                 ptr += cnt
-
-        fisher = compute_fisher_scores(model, calib_loader, criterion, device, num_samples=256)  # ⚠️ This must be batch size = 1
+        if mask_type in ("least_sensitive", "most_sensitive"):
+            fisher = compute_fisher_scores(model, calib_loader, criterion, device, num_samples=256)
+        else: fisher = {n: torch.zeros_like(p, device=device) for n, p in model.named_parameters()}
+       
         masked_fisher = {}
         ptr = 0
         for name, p in model.named_parameters():
@@ -404,9 +406,8 @@ def calibrate_mask_global(
         masks[name] = bin_mask.view_as(model.state_dict()[name])
         ptr += sz
 
-    print(f"[MASK SUMMARY] Kept {int(alive.sum())}/{N} params ({100 * alive.sum() / N:.2f}% kept)")
-    print(f"[MASK SUMMARY NEW] Kept {kept}/{N} params "
-          f"({100*kept/N:.1f}% vs. target {(1-target_sparsity)*100:.1f}%)")
+    kept = int(alive.sum())
+    print(f"[MASK SUMMARY] Kept {kept}/{N} params ({100 * kept / N:.2f}% vs. target {(1 - target_sparsity)*100:.1f}%)")
     print(f"[DEBUG] min_keep_frac = {min_keep_frac*100:.1f}% safety floor enforced")
     print("[MASK DIAG] per-layer keep%:")
     for n, m in masks.items():
