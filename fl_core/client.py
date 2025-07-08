@@ -3,7 +3,6 @@ import os
 
 import torch
 import torch.nn as nn
-import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
 
 from model_editing.SparseSGDM import SparseSGDM
