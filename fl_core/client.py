@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.optim.lr_scheduler import LambdaLR
 
 from model_editing.SparseSGDM import SparseSGDM
-from model_editing.TaLoS import calibrate_mask, compute_fisher_scores, calibrate_mask_layerwise_qk
+from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_layerwise_qk
 
 
 def local_train(
