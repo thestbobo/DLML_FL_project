@@ -67,4 +67,4 @@ TALOS_PRUNE_ROUNDS: 5           # how many mask‐calibration iterations
 CALIBRATION_SPLIT: 0.1              # fraction for Fisher‐calibration (already in place)
 
 MASKS_DIR: "/content/drive/MyDrive/DL_project/masks_cache"      # where to save Fisher scores & masks
-LOAD_MASK: ""       # "/content/drive/MyDrive/DL_project/masks_cache/xxx.pt"
+LOAD_MASK: "/content/drive/MyDrive/DL_project/masks_cache/mask_global.pt"       # "/content/drive/MyDrive/DL_project/masks_cache/xxx.pt"
