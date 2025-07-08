@@ -8,7 +8,7 @@ from torch.optim.lr_scheduler import (
 )
 
 
-def get_scheduler(optimizer, config, scope="global"):
+def get_scheduler(optimizer, config):
     scheduler_type = config.scheduler_type.lower()
     
   if config.scheduler_type == "cosine":
