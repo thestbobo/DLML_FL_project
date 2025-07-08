@@ -3,7 +3,7 @@ from torch.optim.lr_scheduler import (
     LinearLR,
     CosineAnnealingLR,
     ReduceLROnPlateau,
-    StepLR
+    StepLR,
     LambdaLR
 )
 
