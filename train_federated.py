@@ -292,6 +292,15 @@ def main():
         m = max(int(config.CLIENT_FRACTION * config.NUM_CLIENTS), 1)
         selected_clients = np.random.choice(config.NUM_CLIENTS, m, replace=False)
 
+        clients_to_extract = []
+        if t_round % extract_every_n_rounds == 0:
+            num_repr_clients = config.get("REPRESENTATION_CLIENTS_PER_ROUND", 2)
+            clients_to_extract = list(np.random.choice(
+                selected_clients,
+                min(num_repr_clients, len(selected_clients)),
+                replace=False
+            ))
+
         # Log aggregated class distribution every 5 rounds
         if t_round % 5 == 0:
             log_aggregated_class_distribution(client_datasets, selected_clients, t_round)
@@ -321,19 +330,20 @@ def main():
             extract_fn = None
             if t_round % extract_every_n_rounds == 0:
                 # compute class distribution for this client (optional)
-                label_counter = {}
-                for _, label in client_datasets[cid]:
-                    label = label.item()
-                    label_counter[label] = label_counter.get(label, 0) + 1
+                if cid in clients_to_extract:
+                    label_counter = {}
+                    for _, label in client_datasets[cid]:
+                        label = label.item()
+                        label_counter[label] = label_counter.get(label, 0) + 1
 
-                def extract_fn(model_ref=local_model, client_id=cid, round_id=t_round):
-                    probe_loader = get_test_loader(batch_size=config.BATCH_SIZE)
-                    x_probe, _ = next(iter(probe_loader))
-                    reps = get_intermediate_representation(model_ref, x_probe, repr_layers, device)
-                    save_representations(reps, repr_path, client_id, round_id, class_counts=label_counter)
+                    def extract_fn(model_ref=local_model, client_id=cid, round_id=t_round):
+                        probe_loader = get_test_loader(batch_size=config.BATCH_SIZE)
+                        x_probe, _ = next(iter(probe_loader))
+                        reps = get_intermediate_representation(model_ref, x_probe, repr_layers, device)
+                        save_representations(reps, repr_path, client_id, round_id, class_counts=label_counter)
 
-                print(f"[REPRESENTATIONS] Scheduled extraction for Client {cid} at Round {t_round}")
-                print(f"[REPRESENTATIONS] Client {cid} class distribution: {label_counter}")
+                    print(f"[REPRESENTATIONS] Scheduled extraction for Client {cid} at Round {t_round}")
+                    print(f"[REPRESENTATIONS] Client {cid} class distribution: {label_counter}")
 
             # Keep track of initial weights to log weight‐delta (L2)
             initial_weights = copy.deepcopy(local_model.state_dict())

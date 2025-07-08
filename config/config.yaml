@@ -70,10 +70,11 @@ MASKS_DIR: "/content/drive/MyDrive/DL_project/masks_cache"      # where to save 
 LOAD_MASK: ""       # "/content/drive/MyDrive/DL_project/masks_cache/xxx.pt"
 
 # representations extraction
-REPRESENTATION_FREQ: 5  # how often to extract representations (every n-th round)
+REPRESENTATION_FREQ: 10  # how often to extract representations (every n-th round)
 REPRESENTATION_LAYERS:
   - model.blocks.3.attn.qkv       # Mid-layer attention projection (semantic structure)
   - model.blocks.6.mlp.fc2        # Mid-layer MLP output (transformed tokens)
   - model.blocks.11.attn.qkv      # Final attention head (global semantic attention)
 
 REPRESENTATIONS_PATH: "/content/drive/MyDrive/DL_project/representations"  # where to save representations
+REPRESENTATION_CLIENTS_PER_ROUND: 2
