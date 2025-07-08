@@ -116,7 +116,7 @@ def main():
 
     # TaLoS only -> manage mask cache paths
     if method == "talos":
-        if config.LOAD_MASK:
+        if config.LOAD_MASK != '':
             global_mask_file = config.LOAD_MASK
             masks_root = os.path.dirname(global_mask_file)
             os.makedirs(masks_root, exist_ok=True)
