@@ -62,6 +62,7 @@ NC: 10  # Number of classes per client in non-iid setting
 CHECKPOINT_PATH: '' # '/content/drive/MyDrive/DL_project/federated_checkpoints/fl_model_round_25.pth'            # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 OUT_CHECKPOINT_PATH: "/content/drive/MyDrive/DL_project/federated_checkpoints"
 FINETUNE_METHOD: 'dense'           # or "dense"
+mask_type: "least_sensitive"  # Options: least_sensitive, most_sensitive, low_magnitude, high_magnitude, random
 
 # talos fine-tuning (federated)
 TALOS_TARGET_SPARSITY: 0.40       # e.g. keep 1-x % of params

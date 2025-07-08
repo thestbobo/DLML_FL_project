@@ -239,26 +239,24 @@ def calibrate_mask_global(
     seed: int = 42,
     *,
     min_keep_frac: float = 0.05,
+    mask_type: str = "least_sensitive"
 ):
     """
-    Multi-round global TaLoS calibration.
-
-    `min_keep_frac`  :  hard safety floor per layer (0.05 = keep ≥5 %)
+    Multi-round global TaLoS calibration with modular mask scoring.
     """
     model.to(device)
 
-    # 0) clone original weights
+    # 0) Clone original weights
     orig = {n: p.data.clone().cpu() for n, p in model.named_parameters()}
 
-    # 1) flatten all parameters
+    # 1) Flatten all parameters
     shapes = [(n, p.numel()) for n, p in model.named_parameters()]
     N = sum(sz for _, sz in shapes)
     alive = torch.ones(N, dtype=torch.bool, device=device)
 
-    # initial global target
+    # Initial target
     final_keep = max(1, math.ceil((1.0 - target_sparsity) * N))
 
-    # whitelist utility
     def is_whitelisted(name: str) -> bool:
         return (
             name.startswith("model.patch_embed")
@@ -267,19 +265,39 @@ def calibrate_mask_global(
             or name.startswith("classifier")
         )
 
-    # ---------- NEW : per-layer safety floor --------------------------
+    # Safety floor per layer
     layer_min_keep = []
     for name, sz in shapes:
         req = sz if is_whitelisted(name) else math.ceil(min_keep_frac * sz)
         layer_min_keep.append(req)
     min_total_keep = sum(layer_min_keep)
     if final_keep < min_total_keep:
-        final_keep = min_total_keep  # cannot violate safety floor
-    # ------------------------------------------------------------------
+        final_keep = min_total_keep
 
-    # 2) iterative TaLoS pruning rounds
+    # Mask scoring transformer
+    def transform_fisher_scores(fisher, model, mask_type):
+        transformed = {}
+        for name, param in model.named_parameters():
+            if name not in fisher:
+                continue
+            score = fisher[name]
+            if mask_type == "least_sensitive":
+                transformed[name] = score
+            elif mask_type == "most_sensitive":
+                transformed[name] = -score
+            elif mask_type == "low_magnitude":
+                transformed[name] = param.data.abs().to(score.device)
+            elif mask_type == "high_magnitude":
+                transformed[name] = -param.data.abs().to(score.device)
+            elif mask_type == "random":
+                transformed[name] = torch.rand_like(score)
+            else:
+                raise ValueError(f"Unknown mask_type: {mask_type}")
+        return transformed
+
+    # 2) TaLoS pruning rounds
     for r in range(1, rounds + 1):
-        # A) soft-mask weights
+        # A) Soft-mask
         ptr = 0
         with torch.no_grad():
             for name, param in model.named_parameters():
@@ -290,10 +308,10 @@ def calibrate_mask_global(
                 param.data.view(-1).copy_(flat_orig * soft)
                 ptr += cnt
 
-        # B) compute Fisher
+        # B) Fisher computation
         fisher = compute_fisher_scores(model, calib_loader, criterion, device)
 
-        # C) zero-out dead entries in Fisher & gather global vector
+        # C) Zero dead & transform scores
         ptr = 0
         for name, p in model.named_parameters():
             cnt = p.numel()
@@ -303,32 +321,36 @@ def calibrate_mask_global(
                 fisher[name] = f.view_as(fisher[name])
             ptr += cnt
 
+        # Apply transformation
+        fisher = transform_fisher_scores(fisher, model, mask_type)
+
+        # D) Prune current round
         all_scores = torch.cat([fisher[n].view(-1) for n, _ in shapes], 0)
         idxs = alive.nonzero(as_tuple=False).view(-1)
         cnt_alive = idxs.numel()
-
         keep_r = max(1, math.ceil((1 - target_sparsity) ** (r / rounds) * cnt_alive))
         sub = all_scores[idxs]
 
-        if sub.max().item() == 0.0:        # fallback = random keep
+        if sub.max().item() == 0.0:
+            # fallback
             rng = torch.Generator(device=device).manual_seed(seed + r)
             perm = torch.randperm(cnt_alive, generator=rng, device=device)
             keep_fb = max(1, math.ceil(random_fallback_frac * cnt_alive))
             new_alive = torch.zeros_like(alive)
             new_alive[idxs[perm[:keep_fb]]] = True
             alive = new_alive
-        else:                              # prune bottom-(cnt_alive-keep_r)
+        else:
             thr = torch.topk(sub, keep_r, largest=False).values.max()
             alive &= (all_scores <= thr)
 
-        # D) forcibly keep whitelisted layers
+        # E) Preserve whitelisted layers
         ptr = 0
         for name, sz in shapes:
             if is_whitelisted(name):
                 alive[ptr : ptr + sz] = True
             ptr += sz
 
-    # 3) final global adjust
+    # 3) Final target adjustment
     all_scores = torch.cat([fisher[n].view(-1) for n, _ in shapes], 0)
     alive_idxs = alive.nonzero(as_tuple=False).view(-1)
     curr = alive_idxs.numel()
@@ -342,9 +364,8 @@ def calibrate_mask_global(
         best = torch.topk(all_scores[dropped], need, largest=True).indices
         alive[dropped[best]] = True
 
-    # ---------- enforce per-layer floor -------------------------
+    # 4) Per-layer floor enforcement
     ptr = 0
-    extra_alive = 0
     for (name, sz), min_k in zip(shapes, layer_min_keep):
         seg = alive[ptr : ptr + sz]
         kept = int(seg.sum())
@@ -355,10 +376,9 @@ def calibrate_mask_global(
             if dead_idx.numel():
                 top = torch.topk(scores[dead_idx], need, largest=True).indices
                 seg[dead_idx[top]] = True
-                extra_alive += need
         ptr += sz
 
-    # 4) build hard 0/1 masks
+    # 5) Build final 0/1 masks
     masks, ptr = {}, 0
     params = dict(model.named_parameters())
     for name, sz in shapes:
@@ -376,7 +396,6 @@ def calibrate_mask_global(
         print(f"  {n:50s} -> {pct:5.1f}%")
 
     return masks
-
 
 
 
