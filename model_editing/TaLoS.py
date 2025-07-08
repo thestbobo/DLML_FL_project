@@ -227,7 +227,6 @@ it now bumps the global target of how many weights must survive in every layer i
 resurrects weights when a layer dropped below the floor,
 if strict_final=True, drops the same count elsewhere without violating any layer’s floor
 """
-
 def calibrate_mask_global(
     model: torch.nn.Module,
     calib_loader,
@@ -242,46 +241,28 @@ def calibrate_mask_global(
     mask_type: str = "least_sensitive",
     strict_final: bool = False
 ):
-    """
-    Multi-round global TaLoS calibration with modular mask scoring.
-    """
     model.to(device)
-
-    # 0) Clone original weights
     orig = {n: p.data.clone().cpu() for n, p in model.named_parameters()}
-
-    # 1) Flatten all parameters
     shapes = [(n, p.numel()) for n, p in model.named_parameters()]
     N = sum(sz for _, sz in shapes)
     alive = torch.ones(N, dtype=torch.bool, device=device)
-
-    # Initial target
     final_keep = max(1, math.ceil((1.0 - target_sparsity) * N))
 
     def is_whitelisted(name: str) -> bool:
-        return (
-            name.startswith("model.patch_embed")
-            or name.startswith("model.pos_embed")
-            or name.startswith("model.cls_token")
-            or name.startswith("classifier")
-        )
+        return name.startswith("model.patch_embed") or name.startswith("model.pos_embed") or name.startswith("model.cls_token") or name.startswith("classifier")
 
-    # Safety floor per layer
-    layer_min_keep = []
-    for name, sz in shapes:
-        req = sz if is_whitelisted(name) else math.ceil(min_keep_frac * sz)
-        layer_min_keep.append(req)
+    layer_min_keep = [
+        sz if is_whitelisted(name) else math.ceil(min_keep_frac * sz)
+        for name, sz in shapes
+    ]
     min_total_keep = sum(layer_min_keep)
     final_keep = max(final_keep, min_total_keep)
 
-    # Mask scoring transformer
-    def transform_scores(fisher_scores, raw_params):
+    def transform_scores(score_map, raw_params):
         transformed = {}
-        for name, score in fisher_scores.items():
-            if mask_type == "least_sensitive":
+        for name, score in score_map.items():
+            if mask_type in ("least_sensitive", "most_sensitive"):
                 transformed[name] = score
-            elif mask_type == "most_sensitive":
-                transformed[name] = score  
             elif mask_type == "low_magnitude":
                 transformed[name] = raw_params[name].abs().to(score.device)
             elif mask_type == "high_magnitude":
@@ -292,74 +273,59 @@ def calibrate_mask_global(
                 raise ValueError(f"Unknown mask_type: {mask_type}")
         return transformed
 
-    # 2) TaLoS pruning rounds
     for r in range(1, rounds + 1):
-        # A) Soft-mask
         ptr = 0
         with torch.no_grad():
             for name, param in model.named_parameters():
                 cnt = param.numel()
-                flat_orig = orig[name].view(-1).to(device)
-                seg = alive[ptr : ptr + cnt].float().to(device)
+                seg = alive[ptr:ptr+cnt].float().to(device)
                 soft = seg + (1.0 - seg) * 0.1
-                param.data.view(-1).copy_(flat_orig * soft)
+                param.data.view(-1).copy_(orig[name].view(-1).to(device) * soft)
                 ptr += cnt
 
-        # B) Fisher computation
-        fisher = compute_fisher_scores(model, calib_loader, criterion, device)
-
-        # C) Zero dead & transform scores
+        fisher = compute_fisher_scores(model, calib_loader, criterion, device)  # ⚠️ This must be batch size = 1
+        masked_fisher = {}
         ptr = 0
         for name, p in model.named_parameters():
+            cnt = p.numel()
             if name in fisher:
-                cnt = p.numel()
                 f = fisher[name].view(-1).to(device)
-                f *= alive[ptr : ptr + cnt].float()
-                masked_fisher[name] = f.view_as(fisher[name])
-                ptr += cnt
+                f *= alive[ptr:ptr+cnt].float()
+                masked_fisher[name] = f.view_as(p)
             else:
-                masked_fisher[name] = torch.zeros_like(p.data)
-    
-        # Apply transformation
-        scores = transform_scores(masked_fisher, {n: p.data for n,p in model.named_parameters()})
-        
-        # D) Prune current round
-        all_scores = torch.cat([masked_fisher[n].view(-1) for n, _ in shapes], 0)
+                masked_fisher[name] = torch.zeros_like(p)
+            ptr += cnt
+
+        transformed_scores = transform_scores(masked_fisher, {n: p.data for n, p in model.named_parameters()})
+        all_scores = torch.cat([transformed_scores[n].view(-1) for n, _ in shapes], 0)
         idxs = alive.nonzero(as_tuple=False).view(-1)
         cnt_alive = idxs.numel()
         keep_r = max(1, math.ceil((1 - target_sparsity) ** (r / rounds) * cnt_alive))
         sub = all_scores[idxs]
 
         if float(sub.max()) == float(sub.min()) == 0.0:
-            # fallback
             rng = torch.Generator(device=device).manual_seed(seed + r)
             perm = torch.randperm(cnt_alive, generator=rng, device=device)
             keep_fb = max(1, math.ceil(random_fallback_frac * cnt_alive))
-            new_alive = torch.zeros_like(alive)
-            new_alive[idxs[perm[:keep_fb]]] = True
-            alive = new_alive
+            alive.zero_()
+            alive[idxs[perm[:keep_fb]]] = True
         else:
-            if mask_type in ("least_sensitive", "low_magnitude", "random"):
-                _, chosen = torch.topk(sub, keep_r, largest=False)
-            else: 
-                _, chosen = torch.topk(sub, keep_r, largest=True)
-            new_alive = torch.zeros_like(alive)
-            new_alive[idxs[chosen]] = True
-            alive = new_alive
-        # E) Preserve whitelisted layers
+            topk_args = dict(largest=False) if mask_type in ("least_sensitive", "low_magnitude", "random") else dict(largest=True)
+            _, chosen = torch.topk(sub, keep_r, **topk_args)
+            alive.zero_()
+            alive[idxs[chosen]] = True
+
         ptr = 0
         for name, sz in shapes:
             if is_whitelisted(name):
-                alive[ptr : ptr + sz] = True
+                alive[ptr:ptr+sz] = True
             ptr += sz
 
-    # 3) Final target adjustment
-    all_scores = torch.cat([masked_fisher[n].view(-1) for n, _ in shapes], 0)
-    alive_idxs = alive.nonzero(as_tuple=False).view(-1)
-    curr = alive_idxs.numel()
-
+    # Final adjustment to meet exact sparsity
+    all_scores = torch.cat([transformed_scores[n].view(-1) for n, _ in shapes], 0)
+    idxs = alive.nonzero(as_tuple=False).view(-1)
+    curr = idxs.numel()
     if strict_final:
-        # enforce exact final_keep
         if curr > final_keep:
             sub = all_scores[idxs]
             _, worst = torch.topk(sub, curr - final_keep, largest=False)
@@ -371,48 +337,44 @@ def calibrate_mask_global(
             _, best = torch.topk(sub, need, largest=True)
             alive[dropped[best]] = True
     else:
-        # only resurrect if under; skip extra drops
         if curr < final_keep:
             dropped = (~alive).nonzero(as_tuple=False).view(-1)
             need = final_keep - curr
             sub = all_scores[dropped]
             _, best = torch.topk(sub, need, largest=True)
             alive[dropped[best]] = True
-    # 4) Per-layer floor enforcement
+
     ptr = 0
     for (_, sz), min_k in zip(shapes, layer_min_keep):
         seg = alive[ptr:ptr+sz]
-        kept = int(seg.sum())
-        if kept < min_k:
-            need = min_k - kept
+        if seg.sum() < min_k:
             seg_scores = all_scores[ptr:ptr+sz]
             dead_idx = (~seg).nonzero(as_tuple=False).view(-1)
             if dead_idx.numel() > 0:
-                if mask_type in ("least_sensitive", "low_magnitude", "random"):
-                    _, to_add = torch.topk(seg_scores[dead_idx], need, largest=False)
-                else:
-                    _, to_add = torch.topk(seg_scores[dead_idx], need, largest=True)
-                seg[ dead_idx[to_add] ] = True
+                topk_args = dict(largest=False) if mask_type in ("least_sensitive", "low_magnitude", "random") else dict(largest=True)
+                _, to_add = torch.topk(seg_scores[dead_idx], min_k - int(seg.sum()), **topk_args)
+                seg[dead_idx[to_add]] = True
         ptr += sz
 
-    # 5) Build final 0/1 masks
+    # Build final mask
     masks, ptr = {}, 0
-    params = dict(model.named_parameters())
     for name, sz in shapes:
-        bin_mask = alive[ptr : ptr + sz].float().to(device)
-        masks[name] = bin_mask.view_as(params[name])
+        bin_mask = alive[ptr:ptr+sz].float().to(device)
+        masks[name] = bin_mask.view_as(model.state_dict()[name])
         ptr += sz
 
-    kept = int(alive.sum())
-    print(f"[MASK SUMMARY] Kept {kept}/{N} params "
+    print(f"[MASK SUMMARY] Kept {int(alive.sum())}/{N} params ({100 * alive.sum() / N:.2f}% kept)")
+    print(f"[MASK SUMMARY NEW] Kept {kept}/{N} params "
           f"({100*kept/N:.1f}% vs. target {(1-target_sparsity)*100:.1f}%)")
     print(f"[DEBUG] min_keep_frac = {min_keep_frac*100:.1f}% safety floor enforced")
     print("[MASK DIAG] per-layer keep%:")
     for n, m in masks.items():
         pct = 100 * m.sum().item() / m.numel()
         print(f"  {n:50s} -> {pct:5.1f}%")
-
     return masks
+
+    
+
 
 
 
