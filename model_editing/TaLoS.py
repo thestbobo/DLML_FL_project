@@ -228,7 +228,7 @@ resurrects weights when a layer dropped below the floor,
 if strict_final=True, drops the same count elsewhere without violating any layer’s floor
 """
 
-ef calibrate_mask_global(
+def calibrate_mask_global(
     model: torch.nn.Module,
     calib_loader,
     criterion,
