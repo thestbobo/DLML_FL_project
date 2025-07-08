@@ -239,15 +239,11 @@ def calibrate_mask_global(
     seed: int = 42,
     *,
     min_keep_frac: float = 0.05,
-    strict_final: bool = False        # set True if you want to set a strict target sparsity
 ):
     """
     Multi-round global TaLoS calibration.
 
     `min_keep_frac`  :  hard safety floor per layer (0.05 = keep ≥5 %)
-    `strict_final`   :  if True, re-drops the same number of params we had
-                        to resurrect so the global keep count equals the
-                        original `final_keep`.  Off by default.
     """
     model.to(device)
 
@@ -361,39 +357,6 @@ def calibrate_mask_global(
                 seg[dead_idx[top]] = True
                 extra_alive += need
         ptr += sz
-
-    if strict_final and extra_alive > 0:
-        # drop the same number of *least* sensitive weights elsewhere
-        spare = (alive).nonzero(as_tuple=False).view(-1)
-        keep_mask = torch.ones_like(alive)
-        ptr = 0
-        for (_, sz), min_k in zip(shapes, layer_min_keep):
-            seg = alive[ptr : ptr + sz]
-            if int(seg.sum()) <= min_k + extra_alive:
-                keep_mask[ptr : ptr + sz] = False
-            ptr += sz
-        candidates = spare[keep_mask[spare]]
-        if candidates.numel() >= extra_alive:
-            worst = torch.topk(all_scores[candidates], extra_alive, largest=False).indices
-            alive[candidates[worst]] = False
-
-        # ---------- re-enforce per-layer floor post-strict_final -----------
-        ptr = 0
-        # ‘all_scores’, ‘shapes’ and ‘layer_min_keep’ are still in scope
-        for (name, sz), min_k in zip(shapes, layer_min_keep):
-            seg = alive[ptr: ptr + sz]
-            kept = int(seg.sum())
-            if kept < min_k:
-                need = min_k - kept
-                scores = all_scores[ptr: ptr + sz]
-                dead_idx = (~seg).nonzero(as_tuple=False).view(-1)
-                if dead_idx.numel():
-                    top = torch.topk(scores[dead_idx], need, largest=True).indices
-                    seg[dead_idx[top]] = True
-                    extra_alive += need
-            ptr += sz
-        # --------------------------------------------------------------
-    # ------------------------------------------------------------------
 
     # 4) build hard 0/1 masks
     masks, ptr = {}, 0
