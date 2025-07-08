@@ -11,7 +11,7 @@ from torch.optim.lr_scheduler import (
 def get_scheduler(optimizer, config):
     scheduler_type = config.scheduler_type.lower()
     
-  if config.scheduler_type == "cosine":
+    if config.scheduler_type == "cosine":
         warmup = LinearLR(optimizer, start_factor=0.01, total_iters=5)
         cosine = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
         return SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
