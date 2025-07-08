@@ -3,74 +3,35 @@ from collections import OrderedDict
 
 import torch
 
-def compute_fisher_scores(model, dataloader, criterion, device, num_samples=256):
+
+
+
+def compute_fisher_scores(model, dataloader, criterion, device):
     model.eval()
-    fisher = {n: torch.zeros_like(p, device=device) for n, p in model.named_parameters() if p.requires_grad}
-    processed = 0
+    fisher_scores = {
+        name: torch.zeros_like(param)
+        for name, param in model.named_parameters()
+        if param.requires_grad
+    }
 
-    for x, y in dataloader:
-        if processed >= num_samples:
-            break
+    for inputs, labels in dataloader:
+        inputs, labels = inputs.to(device), labels.to(device)
+        model.zero_grad()
 
-        x, y = x.to(device), y.to(device)
-        batch_size = x.size(0)
+        outputs = model(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
 
-        for i in range(batch_size):
-            if processed >= num_samples:
-                break
+        for name, param in model.named_parameters():
+            if param.requires_grad and param.grad is not None:
+                fisher_scores[name] += param.grad.pow(2)
 
-            model.zero_grad(set_to_none=True)
-            output = model(x[i].unsqueeze(0))  # shape: [1, num_classes]
-            loss = criterion(output, y[i].unsqueeze(0))  # scalar
+    n_batches = len(dataloader)
+    if n_batches > 0:
+        for name in fisher_scores:
+            fisher_scores[name] /= float(n_batches)
 
-            grads = torch.autograd.grad(
-                outputs=loss,
-                inputs=[p for p in model.parameters() if p.requires_grad],
-                retain_graph=False,
-                create_graph=False,
-                allow_unused=True
-            )
-
-            for (name, param), g in zip(model.named_parameters(), grads):
-                if param.requires_grad and g is not None:
-                    fisher[name] += g.detach().pow(2)
-
-            processed += 1
-
-    # Normalize by number of samples
-    for name in fisher:
-        fisher[name] /= max(processed, 1)
-
-    return fisher
-
-
-
-#def compute_fisher_scores(model, dataloader, criterion, device):
-#    model.eval()
-#    fisher_scores = {
-#        name: torch.zeros_like(param)
-#        for name, param in model.named_parameters()
-#        if param.requires_grad
-#    }
-
-#    for inputs, labels in dataloader:
-#        inputs, labels = inputs.to(device), labels.to(device)
-#        model.zero_grad()
-
-#        outputs = model(inputs)
-#        loss = criterion(outputs, labels)
-#        loss.backward()
-
-#        for name, param in model.named_parameters():
-#            if param.requires_grad and param.grad is not None:
-#                fisher_scores[name] += param.grad.pow(2)
-
-#    n_batches = len(dataloader)
-#    if n_batches > 0:
-#        for name in fisher_scores:
-#            fisher_scores[name] /= float(n_batches)
-
-#    return fisher_scores
+    return fisher_scores
 
 # this is used in centralized
 def calibrate_mask(fisher_scores, target_sparsity, rounds):
@@ -416,9 +377,6 @@ def calibrate_mask_global(
     return masks
 
     
-
-
-
 
 # this one should work the same as qk but prunes the least sensitive weights instead
 def calibrate_mask_layerwise_qk_ls(
