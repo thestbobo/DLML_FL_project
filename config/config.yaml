@@ -46,7 +46,7 @@ lora_target_modules:
 # --------------------------
 # FEDERATED TRAINING CONFIG
 # --------------------------
-NUM_CLIENTS: 100
+NUM_CLIENTS: 10
 CLIENT_FRACTION: 0.1   # 10% of clients selected each round
 LOCAL_EPOCHS: 0        # no longer used
 LOCAL_STEPS: 8
@@ -69,6 +69,9 @@ CALIBRATION_SPLIT: 0.1              # fraction for Fisher‐calibration (already
 MASKS_DIR: "/content/drive/MyDrive/DL_project/masks_cache"      # where to save Fisher scores & masks
 LOAD_MASK: ""       # "/content/drive/MyDrive/DL_project/masks_cache/xxx.pt"
 
+# dataset down sampling fraction
+downsample_frac: 0.1
+
 # representations extraction
 REPRESENTATION_FREQ: 5  # how often to extract representations (every n-th round)
 REPRESENTATION_LAYERS:
@@ -77,4 +80,4 @@ REPRESENTATION_LAYERS:
   - model.blocks.11.attn.qkv      # Final attention head (global semantic attention)
 
 REPRESENTATIONS_PATH: "/content/drive/MyDrive/DL_project/representations"  # where to save representations
-REPRESENTATION_CLIENTS_PER_ROUND: 2
+REPRESENTATION_CLIENTS_PER_ROUND: 10

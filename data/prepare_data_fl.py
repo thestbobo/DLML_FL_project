@@ -36,12 +36,29 @@ def load_cifar100(root="./data"):
     return datasets.CIFAR100(root=root, train=True, download=True, transform=transform)
 
 
+""" helper function to reduce the amount of data shown to the clients """
+def downsample_stratified(dataset, frac, seed=42):
+    random.seed(seed)
+    # group indices by label
+    class_idxs = defaultdict(list)
+    for idx, (_, lbl) in enumerate(dataset):
+        class_idxs[lbl].append(idx)
+    # sample frac of each class
+    keep = []
+    for lbl, idxs in class_idxs.items():
+        k = max(1, int(len(idxs) * frac))
+        keep += random.sample(idxs, k)
+    return Subset(dataset, keep)
 
-def get_client_datasets(iid, num_clients, nc, seed=42):
+
+def get_client_datasets(iid, num_clients, nc, reduction_frac=None, seed=42):
     """
     Load CIFAR-100 dataset and split it into client datasets.
     """
     full_dataset = load_cifar100()
+
+    if reduction_frac is not None:
+        full_dataset = downsample_stratified(full_dataset, reduction_frac, seed)
 
     if iid:
         return split_iid(full_dataset, num_clients)

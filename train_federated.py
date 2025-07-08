@@ -161,7 +161,7 @@ def main():
 
 
     # data prep
-    client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.NC, config.seed)
+    client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.NC, config.downsample_frac, config.seed)
     test_loader = get_test_loader(batch_size=config.BATCH_SIZE)
 
     # talos branch
@@ -290,12 +290,11 @@ def main():
         print(f"\n--- Round {t_round} ---")
 
         # Select a subset of clients
-        m = max(int(config.CLIENT_FRACTION * config.NUM_CLIENTS), 1)
-        selected_clients = np.random.choice(config.NUM_CLIENTS, m, replace=False)
+        selected_clients = np.arange(config.NUM_CLIENTS)
 
         clients_to_extract = []
         if t_round % extract_every_n_rounds == 0:
-            num_repr_clients = config.get("REPRESENTATION_CLIENTS_PER_ROUND", 2)
+            num_repr_clients = config.REPRESENTATION_CLIENTS_PER_ROUND
             clients_to_extract = list(np.random.choice(
                 selected_clients,
                 min(num_repr_clients, len(selected_clients)),
@@ -428,7 +427,6 @@ def main():
             num_samples_list.append(len(client_datasets[cid]))
 
             # Log this client’s metrics when it was randomly selected
-
             if cid == client_to_log:
                 log_client_metrics(cid, avg_loss, acc, t_round)
                 if sparsity is not None:
@@ -451,17 +449,28 @@ def main():
             sum(len(client_datasets[cid]) for cid in selected_clients)
         )
 
-        if t_round % 5 == 0 or t_round == config.ROUNDS:
+        if t_round % extract_every_n_rounds  == 0 or t_round == config.ROUNDS:
             checkpoint_dir = config.OUT_CHECKPOINT_PATH
             os.makedirs(checkpoint_dir, exist_ok=True)
             checkpoint_path = os.path.join(checkpoint_dir, f"fl_model_round_{t_round}.pth")
             torch.save(global_model.state_dict(), checkpoint_path)
-            print(f"Saved checkpoint: {checkpoint_path}")
+            global_representation = get_intermediate_representation(global_model, x_probe, repr_layers, device)
+            save_representations(global_representation, repr_path, client_id="global", round_num=t_round)
+            print(f"Saved checkpoint and global representation: {checkpoint_path}")
+
+            # save each selected client's weights alongside global
+            for cid, w in zip(selected_clients, local_weights):
+                client_ckpt = os.path.join(
+                    checkpoint_dir, f"client{cid}_round_{t_round}.pth"
+                )
+                torch.save(w, client_ckpt)
+                print(f"[CKPT] Saved client {cid} weights → {client_ckpt}")
 
         print(f"Round {t_round} complete — Global loss: {metrics['global_loss']:.4f}, metrics: {metrics}\n")
 
     print(f"\n{'=' * 10} Training Completed {'=' * 10}")
     return global_model
+
 
 
 if __name__ == "__main__":
