@@ -17,7 +17,7 @@ def get_scheduler(optimizer, config):
         return SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
 
     elif config.scheduler_type == "plateau":
-        return torch.optim.lr_scheduler.ReduceLROnPlateau(
+        return ReduceLROnPlateau(
             optimizer,
             mode="min",
             factor=0.5,
@@ -26,7 +26,7 @@ def get_scheduler(optimizer, config):
         )
 
     elif config.scheduler_type == "step":
-        return torch.optim.lr_scheduler.StepLR(
+        return StepLR(
             optimizer,
             step_size=10,
             gamma=0.1
