@@ -105,7 +105,7 @@ def local_train_talos(
     """
     model.to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = SparseSGDM(model.parameters(), lr=lr, momentum=0.9)
+    optimizer = SparseSGDM(model.parameters(), lr=lr, momentum=0.9, mask=global_masks)
 
     # -----DEBUG-----
     print(">>> optimizer lr =", optimizer.param_groups[0]["lr"])

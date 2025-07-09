@@ -160,13 +160,11 @@ def main():
                 p.requires_grad = True
 
         # Build optimizer over just LoRA params
-        optimizer = SparseSGDM(
+        optimizer = torch.optim.SGD(
             get_lora_params(model),
             lr=config.learning_rate,
             momentum=config.momentum,
             weight_decay=config.weight_decay,
-            mask=None,  # or supply a mask to sparsify adapters further
-            model=None
         )
 
     elif config.finetuning_method == "dense":
