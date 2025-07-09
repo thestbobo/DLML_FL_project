@@ -138,7 +138,7 @@ def main():
             shared_masks = calibrate_mask_global(
                 fisher_scores,
                 target_sparsity=config.TALOS_TARGET_SPARSITY, 
-                whitelist=["classifier", "pos_embed", "patch_embed", "blocks.0.", "blocks.11."],
+                whitelist=["classifier", "pos_embed", "patch_embed", "blocks.0.", "blocks.11.", "cls_token", "attn.proj", "mlp.fc2"],
                 min_keep_frac=0.5
             )
             mask_manager.save_mask(shared_masks, "mask_global.pt")
