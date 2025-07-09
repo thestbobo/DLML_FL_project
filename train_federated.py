@@ -141,7 +141,9 @@ def main():
             print("\n>>> Preparing mask (TaLoS) …")
             """ Build a global mask (keep least sensitive) """
 
-            pruner = TaLoS([p for p in dummy.parameters() if p.requires_grad])
+            pruner = TaLoS(
+                [(name, p) for name, p in dummy.named_parameters() if p.requires_grad]
+            )
             for round in range(config.TALOS_PRUNE_ROUNDS):
                 target = config.TALOS_TARGET_SPARSITY ** ((round + 1) / config.TALOS_PRUNE_ROUNDS)
                 pruner.score(dummy, torch.nn.CrossEntropyLoss(), fisher_loader, device, 200)
