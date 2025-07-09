@@ -42,14 +42,14 @@ lora_target_modules:
 # --------------------------
 # FEDERATED TRAINING CONFIG
 # --------------------------
-NUM_CLIENTS: 10
+NUM_CLIENTS: 100
 CLIENT_FRACTION: 0.1                        # 10% of clients selected each round
 LOCAL_STEPS: 8
 BATCH_SIZE: 64
 LR: 0.001
 LR_DECAY: 0.99                              # per-round global lr decay factor
 WARMUP_EPOCHS: 1                            # local warm-up scheduler
-ROUNDS: 50
+ROUNDS: 100
 IID: False                                  # Set to False for non-iid
 NC: 10                                      # Number of classes per client in non-iid setting
 CHECKPOINT_PATH: ""                         # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume

@@ -91,6 +91,14 @@ def calibrate_mask_global(
     *,
     min_keep_frac: float = 0.05,
 ):
+    """
+    Multi-round global TaLoS calibration.
+
+    `min_keep_frac`  :  hard safety floor per layer (0.05 = keep ≥5 %)
+    `strict_final`   :  if True, re-drops the same number of params we had
+                        to resurrect so the global keep count equals the
+                        original `final_keep`.  Off by default.
+    """
     model.to(device)
 
     orig = {n: p.data.clone().cpu() for n, p in model.named_parameters()}
@@ -102,7 +110,12 @@ def calibrate_mask_global(
     final_keep = max(1, math.ceil((1.0 - target_sparsity) * N))
 
     def is_whitelisted(name: str) -> bool:
-        return name.startswith("model.patch_embed") or name.startswith("model.pos_embed") or name.startswith("model.cls_token") or name.startswith("classifier")
+        return (
+            name.startswith("model.patch_embed")
+            or name.startswith("model.pos_embed")
+            or name.startswith("model.cls_token")
+            or name.startswith("classifier")
+        )
 
     layer_min_keep = []
     for name, sz in shapes:
@@ -117,9 +130,10 @@ def calibrate_mask_global(
         with torch.no_grad():
             for name, param in model.named_parameters():
                 cnt = param.numel()
-                seg = alive[ptr:ptr+cnt].float().to(device)
+                flat_orig = orig[name].view(-1).to(device)
+                seg = alive[ptr : ptr + cnt].float().to(device)
                 soft = seg + (1.0 - seg) * 0.1
-                param.data.view(-1).copy_(orig[name].view(-1).to(device) * soft)
+                param.data.view(-1).copy_(flat_orig * soft)
                 ptr += cnt
 
         fisher = compute_fisher_scores(model, calib_loader, criterion, device)
@@ -129,16 +143,14 @@ def calibrate_mask_global(
             cnt = p.numel()
             if name in fisher:
                 f = fisher[name].view(-1).to(device)
-                f *= alive[ptr:ptr+cnt].float()
-                masked_fisher[name] = f.view_as(p)
-            else:
-                masked_fisher[name] = torch.zeros_like(p)
+                f *= alive[ptr : ptr + cnt].float()
+                fisher[name] = f.view_as(fisher[name])
             ptr += cnt
 
-        transformed_scores = transform_scores(masked_fisher, {n: p.data for n, p in model.named_parameters()})
-        all_scores = torch.cat([transformed_scores[n].view(-1) for n, _ in shapes], 0)
+        all_scores = torch.cat([fisher[n].view(-1) for n, _ in shapes], 0)
         idxs = alive.nonzero(as_tuple=False).view(-1)
         cnt_alive = idxs.numel()
+
         keep_r = max(1, math.ceil((1 - target_sparsity) ** (r / rounds) * cnt_alive))
         sub = all_scores[idxs]
 
@@ -156,7 +168,7 @@ def calibrate_mask_global(
         ptr = 0
         for name, sz in shapes:
             if is_whitelisted(name):
-                alive[ptr:ptr+sz] = True
+                alive[ptr : ptr + sz] = True
             ptr += sz
 
     all_scores = torch.cat([fisher[n].view(-1) for n, _ in shapes], 0)
@@ -173,30 +185,36 @@ def calibrate_mask_global(
         alive[dropped[best]] = True
 
     ptr = 0
-    for (_, sz), min_k in zip(shapes, layer_min_keep):
-        seg = alive[ptr:ptr+sz]
-        if seg.sum() < min_k:
-            seg_scores = all_scores[ptr:ptr+sz]
+    extra_alive = 0
+    for (name, sz), min_k in zip(shapes, layer_min_keep):
+        seg = alive[ptr : ptr + sz]
+        kept = int(seg.sum())
+        if kept < min_k:
+            need = min_k - kept
+            scores = all_scores[ptr : ptr + sz]
             dead_idx = (~seg).nonzero(as_tuple=False).view(-1)
-            if dead_idx.numel() > 0:
-                topk_args = dict(largest=False) if mask_type in ("least_sensitive", "low_magnitude", "random") else dict(largest=True)
-                _, to_add = torch.topk(seg_scores[dead_idx], min_k - int(seg.sum()), **topk_args)
-                seg[dead_idx[to_add]] = True
+            if dead_idx.numel():
+                top = torch.topk(scores[dead_idx], need, largest=True).indices
+                seg[dead_idx[top]] = True
+                extra_alive += need
         ptr += sz
 
     masks, ptr = {}, 0
+    params = dict(model.named_parameters())
     for name, sz in shapes:
-        bin_mask = alive[ptr:ptr+sz].float().to(device)
-        masks[name] = bin_mask.view_as(model.state_dict()[name])
+        bin_mask = alive[ptr : ptr + sz].float().to(device)
+        masks[name] = bin_mask.view_as(params[name])
         ptr += sz
 
     kept = int(alive.sum())
-    print(f"[MASK SUMMARY] Kept {kept}/{N} params ({100 * kept / N:.2f}% vs. target {(1 - target_sparsity)*100:.1f}%)")
+    print(f"[MASK SUMMARY] Kept {kept}/{N} params "
+          f"({100*kept/N:.1f}% vs. target {(1-target_sparsity)*100:.1f}%)")
     print(f"[DEBUG] min_keep_frac = {min_keep_frac*100:.1f}% safety floor enforced")
     print("[MASK DIAG] per-layer keep%:")
     for n, m in masks.items():
         pct = 100 * m.sum().item() / m.numel()
         print(f"  {n:50s} -> {pct:5.1f}%")
+
     return masks
 
 # qk layer pruning (prunes the most sensitive weights)

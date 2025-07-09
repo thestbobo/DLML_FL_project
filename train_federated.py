@@ -54,52 +54,6 @@ def evaluate(model, dataloader):
 
     return metrics
 
-def save_checkpoint(model, optimizer, scheduler, round_num, metrics, config, path):
-    torch.save({
-        "round": round_num,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict() if optimizer else None,
-        "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
-        "test_metrics": metrics,
-        "finetuning_method": config.FINETUNE_METHOD,
-        "seed": config.seed,
-        "np_seed": np.random.get_state()
-    }, path)
-    print(f"[INFO] Saved checkpoint to {path}")
-
-
-def load_checkpoint(model, optimizer, scheduler, path, config):
-    if not os.path.exists(path):
-        print("[WARN] No checkpoint found.")
-        return 0  # start from scratch
-
-    print(f"[INFO] Loading checkpoint from {path} …")
-    ckpt = torch.load(path, map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-
-    if "model_state_dict" not in ckpt:
-        print("[WARN] Checkpoint is a pure state_dict. Loading only weights.")
-        model.load_state_dict(ckpt, strict=False)
-        match = re.search(r"round_(\\d+)", path)
-        return int(match.group(1)) if match else 0
-
-    model.load_state_dict(ckpt["model_state_dict"])
-
-    if optimizer and ckpt.get("optimizer_state_dict"):
-        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-    if scheduler and ckpt.get("scheduler_state_dict"):
-        scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-
-    seed = ckpt.get("seed", config.seed)
-    np_seed = ckpt.get("np_seed", None)
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    if np_seed:
-        np.random.set_state(np_seed)
-
-    print(f"[INFO] Resumed from round {ckpt['round']} with top-1 acc = {ckpt.get('test_metrics', {}).get('top_1_accuracy', 0.0):.2%}")
-    return ckpt["round"]
-
-
 
 def load_checkpoint(model, optimizer, scheduler, path, config):
     if not os.path.exists(path):

@@ -17,7 +17,6 @@ from model_editing.LoRA import LoraConfig, apply_lora, get_lora_params
 from models.dino_ViT_s16 import DINO_ViT
 from data.prepare_data import get_cifar100_loaders, get_sparse_loaders
 from project_utils.metrics import get_metrics
-from project_utils.scheduler import get_scheduler
 
 
 def set_seed(seed):
