@@ -159,28 +159,6 @@ def main():
 
             torch.save(fisher_scores, global_fisher_file)
 
-            # Calibrate the binary mask over multiple rounds
-            R = config.TALOS_PRUNE_ROUNDS
-            keep_ratio = 1.0 - config.TALOS_TARGET_SPARSITY
-
-            """ Build a layer‐wise Q/K float mask (keep most sensitive) """
-            # shared_masks = calibrate_mask_layerwise_qk(
-            #     dummy,
-            #     fisher_scores,
-            #     keep_ratio_per_block=keep_ratio,
-            #     target_qk_sparsity=config.TALOS_TARGET_SPARSITY,
-            #     max_rounds=R
-            # )
-
-            """ Build a layer‐wise Q/K float mask (keep least sensitive) """
-            # shared_masks = calibrate_mask_layerwise_qk_ls(
-            #     model=global_model,
-            #     fisher_scores=fisher_scores,
-            #     target_qk_sparsity=config.TALOS_TARGET_SPARSITY,
-            #     max_rounds=config.TALOS_PRUNE_ROUNDS
-            # )
-            #
-
             print("\n>>> Preparing mask (TaLoS) …")
             """ Build a global mask (keep least sensitive) """
 
