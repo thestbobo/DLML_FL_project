@@ -53,7 +53,7 @@ BATCH_SIZE: 64
 LR: 0.001
 LR_DECAY: 0.99        # per-round global lr decay factor
 WARMUP_EPOCHS: 1      # local warm-up scheduler
-ROUNDS: 100
+ROUNDS: 50
 IID: False  # Set to False for non-iid
 NC: 10  # Number of classes per client in non-iid setting
 CHECKPOINT_PATH: '' # '/content/drive/MyDrive/DL_project/federated_checkpoints/fl_model_round_25.pth'            # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
