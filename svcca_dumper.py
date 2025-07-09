@@ -12,7 +12,7 @@ from sklearn.exceptions import ConvergenceWarning
 """ takes local saved representations and calculates svcca, dumps the value to a csv file """
 
 # Base directory for your .pt representation files. Change it if you are on the drive
-BASE = r""
+BASE = r"C:\Users\Atabay\PycharmProjects\DLML_FL_project\saved_representations"
 
 def load_reps(path_pattern, layer):
     files = glob.glob(path_pattern)
@@ -71,7 +71,7 @@ if __name__ == "__main__":
 
     for layer in layers:
         for num_client in range(10):
-            for rnd in range(5, 50, 5):
+            for rnd in range(5, 51, 5):
                 client_pattern = os.path.join(
                     BASE, f"client{num_client}_round{rnd}.pt"
                 )
