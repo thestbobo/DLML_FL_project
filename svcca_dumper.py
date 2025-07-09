@@ -12,7 +12,7 @@ from sklearn.exceptions import ConvergenceWarning
 """ takes local saved representations and calculates svcca, dumps the value to a csv file """
 
 # Base directory for your .pt representation files. Change it if you are on the drive
-BASE = r"C:\Users\Atabay\PycharmProjects\DLML_FL_project\saved_representations"
+BASE = r""
 
 def load_reps(path_pattern, layer):
     files = glob.glob(path_pattern)
@@ -35,12 +35,14 @@ def svcca_score(X, Y, k=20, pca_dim=50, max_samples=2000):
     if nY > nX:
         idx = np.random.choice(nY, size=nX, replace=False)
         Y = Y[idx]
-    elif nY < nX:
-        raise ValueError(f"Global has fewer rows ({nY}) than client ({nX})")
+    else:
+        idx = np.random.choice(nX, size=nY, replace=False)
+        X = X[idx]
 
+    n = X.shape[0]
     # (Optional) further subsample to at most max_samples
-    if max_samples and nX > max_samples:
-        sel = np.random.choice(nX, size=max_samples, replace=False)
+    if max_samples and n > max_samples:
+        sel = np.random.choice(n, size=max_samples, replace=False)
         X = X[sel]
         Y = Y[sel]
 
@@ -90,7 +92,7 @@ if __name__ == "__main__":
                             score = svcca_score(C, G,
                                                 k=20,
                                                 pca_dim=50,
-                                                max_samples=2000)
+                                                max_samples=2000, seed=42)
                         except Exception as e:
                             print(f"[WARNING] Skipping layer={layer} "
                                   f"round={rr} client={cid} due to: {e}")
