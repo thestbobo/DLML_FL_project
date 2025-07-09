@@ -23,11 +23,9 @@ from project_utils.federated_metrics import (
     log_aggregated_class_distribution,
     log_round_info,
     log_global_metrics,
-    log_client_metrics,
-)
+    log_client_metrics)
 
 from representations.representations_manager import get_intermediate_representation, save_representations
-
 
 
 def evaluate(model, dataloader):
@@ -55,19 +53,6 @@ def evaluate(model, dataloader):
     metrics["global_loss"] = avg_loss
 
     return metrics
-
-def save_checkpoint(model, optimizer, scheduler, round_num, metrics, config, path):
-    torch.save({
-        "round": round_num,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict() if optimizer else None,
-        "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
-        "test_metrics": metrics,
-        "finetuning_method": config.FINETUNE_METHOD,
-        "seed": config.seed,
-        "np_seed": np.random.get_state()
-    }, path)
-    print(f"[INFO] Saved checkpoint to {path}")
 
 
 def load_checkpoint(model, optimizer, scheduler, path, config):
