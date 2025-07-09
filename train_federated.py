@@ -48,6 +48,18 @@ def evaluate(model, dataloader):
 
     return metrics
 
+def print_mask_stats(mask_dict):
+    total_params = total_kept = 0
+    print("[MASK STATS]")
+    for name, mask in mask_dict.items():
+        kept = int(mask.sum())
+        total = mask.numel()
+        pct = 100 * kept / total
+        print(f"{name:45s}: kept {kept:7d}/{total:7d} ({pct:5.1f}%)")
+        total_params += total
+        total_kept += kept
+    print(f"Total kept: {total_kept}/{total_params} ({100*total_kept/total_params:.2f}%)")
+
 
 def main():
     # load config / init WandB
@@ -218,6 +230,9 @@ def main():
     else:
         shared_masks = None
         print("\n>>> Skipping Fisher/mask preparation — dense training.")
+
+    
+    print_mask_stats(shared_masks)
 
     # lr.
     base_lr = config.LR
