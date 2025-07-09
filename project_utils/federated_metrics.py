@@ -1,7 +1,4 @@
 import wandb
-import torch
-import numpy as np
-from collections import Counter
 
 
 def log_local_weight_norms(local_weights, round_num):
@@ -59,7 +56,6 @@ def log_aggregated_class_distribution(client_datasets, selected_clients, round_n
     all_labels = []
     for cid in selected_clients:
         all_labels.extend([label for _, label in client_datasets[cid]])
-    # Log raw labels as a WandB histogram
     wandb.log({
         'round': round_num,
         'aggregated_class_distribution': wandb.Histogram(all_labels)

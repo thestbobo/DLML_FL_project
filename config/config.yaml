@@ -2,9 +2,9 @@
 # JOB CONFIGURATION
 # --------------------------
 
-wandb_project_folder: "Federated-DINO-ViT"         # Name of the project folder in wandb
-run_id: ""
-seed: 42                                              # Random seed for reproducibility
+wandb_project_folder: "Federated-DINO-ViT"  # Name of the project folder in wandb
+run_id: ""                                  # Wandb run id if resuming from a run
+seed: 42                                    # Random seed for reproducibility
 
 # --------------------------
 # CENTRALIZED TRAINING CONFIG
@@ -18,56 +18,70 @@ momentum: 0.9579794867057544
 t_max: 50
 epochs: 50
 load_checkpoint: False
-checkpoint_path: '/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth' # "/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
-out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
-# when loading a checkpoint, initialize wandb with run_id and resume="must"
-finetuning_method: "dense"                             # fine-tuning method switch -> "dense" / "lora" / "talos"
-scheduler_type: "cosine"  # Options: "cosine", "plateau", "step", "lambda", "none"
-lambda_decay_rate: 0.95
+checkpoint_path: ""                         # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
+out_checkpoint_dir: ""
+finetuning_method: "dense"                  # fine-tuning method switch -> "dense" / "lora" / "talos"
 
 # talos fine-tuning (centralized)
-nesterov: False                         # enable nesterov acceleration
-dampening: 0                            # fraction of grad to drop from momentum buffer
-target_sparsity: 0.8                    # Target sparsity level (e.g., 80%)
-sparsity_rounds: 5                      # Number of rounds for mask calibration
-calib_split: 0.05                       # split of the training data dedicated to mask calibration
-calib_batch_size: 16                    # for Fisher calibration
+nesterov: False                             # enable nesterov acceleration
+dampening: 0                                # fraction of grad to drop from momentum buffer
+target_sparsity: 0.8                        # Target sparsity level (e.g., 80%)
+sparsity_rounds: 5                          # Number of rounds for mask calibration
+calib_split: 0.05                           # split of the training data dedicated to mask calibration
+calib_batch_size: 16                        # for Fisher calibration
 calib_rounds: 5
 
 # LoRA fine-tuning (centralized)
-lora_rank: 8                                                                # dimensionality of the low-rank update matrices (AB)
-lora_alpha: 32                                                              # factor applied to the low-rank update (alpha/r * AB)
-lora_dropout: 0.05                                                          # Dropout probability on the updates
+lora_rank: 8                                # dimensionality of the low-rank update matrices (AB)
+lora_alpha: 32                              # factor applied to the low-rank update (alpha/r * AB)
+lora_dropout: 0.05                          # Dropout probability on the updates
 lora_target_modules:
   - "qkv"
   - "proj"
-  # optionally, for adapters in the MLP:
-  # - "mlp.fc1"
-  # - "mlp.fc2"
 
 # --------------------------
 # FEDERATED TRAINING CONFIG
 # --------------------------
-NUM_CLIENTS: 100
-CLIENT_FRACTION: 0.1   # 10% of clients selected each round
-LOCAL_EPOCHS: 0        # no longer used
-LOCAL_STEPS: 16
+NUM_CLIENTS: 10
+CLIENT_FRACTION: 0.1                        # 10% of clients selected each round
+LOCAL_STEPS: 8
 BATCH_SIZE: 64
 LR: 0.001
-LR_DECAY: 0.99        # per-round global lr decay factor
-WARMUP_EPOCHS: 1      # local warm-up scheduler
+LR_DECAY: 0.99                              # per-round global lr decay factor
+WARMUP_EPOCHS: 1                            # local warm-up scheduler
 ROUNDS: 50
-IID: False  # Set to False for non-iid
-NC: 10  # Number of classes per client in non-iid setting
-CHECKPOINT_PATH: '' # '/content/drive/MyDrive/DL_project/federated_checkpoints/fl_model_round_25.pth'            # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
-OUT_CHECKPOINT_PATH: "/content/drive/MyDrive/DL_project/federated_checkpoints"
-FINETUNE_METHOD: 'dense'           # or "dense"
-mask_type: "least_sensitive"  # Options: least_sensitive, most_sensitive, low_magnitude, high_magnitude, random
+IID: False                                  # Set to False for non-iid
+NC: 10                                      # Number of classes per client in non-iid setting
+CHECKPOINT_PATH: ""                         # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
+OUT_CHECKPOINT_PATH: ""
+FINETUNE_METHOD: 'dense'                    # "talos" or "dense"
 
 # talos fine-tuning (federated)
-TALOS_TARGET_SPARSITY: 0.40       # e.g. keep 1-x % of params
-TALOS_PRUNE_ROUNDS: 5           # how many mask‐calibration iterations
-CALIBRATION_SPLIT: 0.1              # fraction for Fisher‐calibration (already in place)
+TALOS_MASK_TYPE: "global_mask"              # global (global mask), qk_ls (qk pruning least sensitive), qk_ms (qk pruning most sensitive)
+TALOS_TARGET_SPARSITY: 0.40                 # e.g. keep 1-x % of params
+TALOS_PRUNE_ROUNDS: 5                       # how many mask‐calibration iterations
+CALIBRATION_SPLIT: 0.1                      # fraction for Fisher‐calibration (already in place)
 
-MASKS_DIR: "/content/drive/MyDrive/DL_project/masks_cache"      # where to save Fisher scores & masks
-LOAD_MASK: '' #"/content/drive/MyDrive/DL_project/masks_cache/mask_global.pt"       # "/content/drive/MyDrive/DL_project/masks_cache/xxx.pt"
+MASKS_DIR: ""                               # where to save Fisher scores & masks
+LOAD_MASK: ""                               # "/content/drive/MyDrive/DL_project/masks_cache/xxx.pt"
+
+# dataset down sampling fraction
+downsample_frac: 0.1
+
+# svcca parameters
+SVCCA_K: 20                                 # number of canonical components to keep
+SVCCA_PCA_DIM: 50                           # PCA dimension before CCA
+SVCCA_MAX_SAMPLES: 2000                     # max rows to subsample for SVCCA
+
+# representations extraction
+REPRESENTATION_FREQ: 5                      # how often to extract representations (every n-th round)
+REPRESENTATION_LAYERS:
+  - model.blocks.3.attn.qkv                 # Mid-layer attention projection (semantic structure)
+  - model.blocks.6.mlp.fc2                  # Mid-layer MLP output (transformed tokens)
+  - model.blocks.11.attn.qkv                # Final attention head (global semantic attention)
+
+REPRESENTATIONS_PATH: ""                    # where to save representations
+REPRESENTATION_CLIENTS_PER_ROUND: 10        # number of clients to save
+
+# svcca_dumper parameters
+OUT_DUMPER_PATH: ""

@@ -1,10 +1,8 @@
-# LoRA.py
-
 import torch
 import torch.nn as nn
 import math
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List
 
 
 @dataclass
@@ -32,16 +30,14 @@ class LoRALayer(nn.Module):
         self.scaling = alpha / r
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
-        # LoRA parameters
         dev = orig_linear.weight.device
         self.A = nn.Parameter(torch.zeros(orig_linear.in_features, r, device=dev))
         self.B = nn.Parameter(torch.zeros(r, orig_linear.out_features, device=dev))
-        # init
+
         nn.init.kaiming_uniform_(self.A, a=math.sqrt(5))
         nn.init.zeros_(self.B)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # frozen original + low-rank path
         return self.orig(x) + self.dropout(x @ self.A @ self.B) * self.scaling
 
 

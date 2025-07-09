@@ -47,11 +47,6 @@ def train_one_epoch(model, dataloader, optimizer, criterion, scaler, device, cur
         scaler.step(optimizer)
         scaler.update()
 
-        # outputs = model(inputs)
-        # loss = criterion(outputs, labels)
-        # loss.backward()
-        # optimizer.step()
-
         running_loss += loss.item() * inputs.size(0)
         _, predicted = torch.max(outputs.data, 1)
         total += labels.size(0)
@@ -63,7 +58,7 @@ def train_one_epoch(model, dataloader, optimizer, criterion, scaler, device, cur
     avg_loss = running_loss / total
     all_outputs = torch.cat(all_outputs)
     all_labels = torch.cat(all_labels)
-    metrics = get_metrics(all_outputs, all_labels)  # Calcola le metriche
+    metrics = get_metrics(all_outputs, all_labels)
 
     return avg_loss, metrics
 
@@ -91,7 +86,7 @@ def validate(model, dataloader, criterion, device, verbose=False):
     avg_loss = running_loss / total
     all_outputs = torch.cat(all_outputs)
     all_labels = torch.cat(all_labels)
-    metrics = get_metrics(all_outputs, all_labels)  # Calcola le metriche
+    metrics = get_metrics(all_outputs, all_labels)
 
     return avg_loss, metrics
 
@@ -123,38 +118,26 @@ def main():
     criterion = nn.CrossEntropyLoss().to(device)
     scaler = torch.cuda.amp.GradScaler()
 
-    # optimizer = torch.optim.SGD(model.classifier.parameters(),
-    #                             lr=config.learning_rate,
-    #                             weight_decay=config.weight_decay,
-    #                             momentum=config.momentum)
-
-    # LR SCHEDULER
-    # warmup_scheduler = LinearLR(optimizer, start_factor=0.01, total_iters=5)
-    # cosine_scheduler = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
-    # scheduler = SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[5])
-
     # FINE-TUNING SETUP
     if config.finetuning_method == "lora":
-        # Configure LoRA
         lora_cfg = LoraConfig(
             r=config.lora_rank,
             alpha=config.lora_alpha,
-            target_modules=config.lora_target_modules,  # e.g. ["q_proj","k_proj","v_proj","out_proj"]
+            target_modules=config.lora_target_modules,
             dropout=config.lora_dropout,
         )
-        # Wrap the model
+
         print("[LoRA] applying LoRA layers to the model...")
         model = apply_lora(model, lora_cfg)
         model = model.to(device)
         torch.cuda.empty_cache()
-        # Freeze backbone, leave only LoRA A/B trainable
         print("[LoRA] freezing backbone (only leaving LoRA layers trainable...")
+
         for name, p in model.named_parameters():
             p.requires_grad = False
         for p in get_lora_params(model):
             p.requires_grad = True
 
-        # ── Unfreeze classification head ──
         for name, p in model.named_parameters():
             if "classifier" in name or "head" in name:
                 p.requires_grad = True
@@ -165,6 +148,8 @@ def main():
             lr=config.learning_rate,
             momentum=config.momentum,
             weight_decay=config.weight_decay,
+            mask=None,
+            model=None
         )
 
     elif config.finetuning_method == "dense":
@@ -177,7 +162,7 @@ def main():
         )
 
     elif config.finetuning_method == "talos":
-        # splits train loader to get a fraction of the data for mask calibration
+        # split train loader to get a fraction of the data for mask calibration
         sparse_train_loader, calib_loader = get_sparse_loaders(
             train_loader.dataset,
             calib_frac=config.calib_split,
@@ -212,8 +197,20 @@ def main():
     else:
         raise ValueError(f"Unknown finetuning_method: {config.finetuning_method}")
 
-    scheduler = get_scheduler(optimizer, config)
-    
+    # Build scheduler on new optimizer
+    warmup = LinearLR(optimizer, start_factor=0.01, total_iters=5)
+    cosine = CosineAnnealingLR(optimizer, T_max=config.epochs - 5)
+    scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[5])
+
+    if config.finetuning_method == "lora":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=0.5,
+            patience=3,
+            verbose=True
+        )
+
     # CHECKPOINT LOADING FOR MODEL WEIGHTS (optional: must be enabled in config.yaml):
     starting_epoch = 0
     best_val_accuracy = 0.0
@@ -249,13 +246,10 @@ def main():
                                                     verbose=True)
         val_loss, val_metrics = validate(model, val_loader, criterion, device, verbose=True)
 
-
-        if scheduler is not None:
-            if config.scheduler_type == "plateau":
-                scheduler.step(val_loss)
-            else:
-                scheduler.step()
-
+        if config.finetuning_method == "lora":
+            scheduler.step(val_loss)
+        else:
+            scheduler.step()
 
         print(
             f"Epoch {epoch + 1}/{config.epochs} | Train Loss: {train_loss:.4f} | Train Metrics: {train_metrics} | "

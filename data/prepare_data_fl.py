@@ -1,10 +1,10 @@
+import random
 import numpy as np
+
+from collections import defaultdict
+from torchvision.datasets import CIFAR100
 from torchvision import datasets, transforms
 from torch.utils.data import Subset, DataLoader
-from collections import defaultdict
-import random
-
-from torchvision.datasets import CIFAR100
 
 
 def get_transform():
@@ -15,32 +15,52 @@ def get_transform():
                              std=[0.229, 0.224, 0.225]),
     ])
 
-
 def load_cifar100(root="./data"):
     transform = get_transform()
     return datasets.CIFAR100(root=root, train=True, download=True, transform=transform)
 
+""" 
+helper function to reduce the amount of data shown to the clients 
+in testing, dataset size is reduced by the same proportion that number of clients is reduced
+therefore, the clients see the same amount of data
+"""
 
-def get_client_datasets(iid, num_clients, nc, seed=42):
+def downsample_stratified(dataset, frac, seed=42):
+    random.seed(seed)
+    # group indices by label
+    class_idxs = defaultdict(list)
+    for idx, (_, lbl) in enumerate(dataset):
+        class_idxs[lbl].append(idx)
+    # sample frac of each class
+    keep = []
+    for lbl, idxs in class_idxs.items():
+        k = max(1, int(len(idxs) * frac))
+        keep += random.sample(idxs, k)
+    return Subset(dataset, keep)
+
+def get_client_datasets(iid, num_clients, nc, reduction_frac=None, seed=42):
     """
     Load CIFAR-100 dataset and split it into client datasets.
     """
     full_dataset = load_cifar100()
+
+    if reduction_frac is not None:
+        full_dataset = downsample_stratified(full_dataset, reduction_frac, seed)
 
     if iid:
         return split_iid(full_dataset, num_clients)
     else:
         return split_noniid(full_dataset, num_clients, nc=nc, seed=seed)
 
-
 def get_test_loader(batch_size):
     test_transform = get_transform()
     test_data = CIFAR100(root="./data", train=False, download=True, transform=test_transform)
     return DataLoader(test_data, batch_size=batch_size, shuffle=False)
 
-
 def split_iid(dataset, num_clients, seed=42):
-    """IID sharding: randomly assign equal data to each client."""
+    """
+    IID sharding: randomly assign equal data to each client.
+    """
     random.seed(seed)
     np.random.seed(seed)
 
@@ -75,46 +95,27 @@ def split_noniid(dataset, num_clients, nc=2, seed=42):
     random.seed(seed)
     np.random.seed(seed)
 
-    # Group all indices by their class label
     class_indices = defaultdict(list)
     for idx, (_, label) in enumerate(dataset):
         class_indices[label].append(idx)
 
-    # define how many shards total and compute each shard's size
     total_samples = len(dataset)
     total_shards = num_clients * nc
     shard_size = total_samples // total_shards
     shards = []
 
-    # for each class, shuffle its indices and chop into shards of 'shard_size'
     for lbl, idxs in class_indices.items():
         random.shuffle(idxs)
         for i in range(0, len(idxs), shard_size):
             shard = idxs[i: i + shard_size]
             shards.append(shard)
 
-    # shuffle all shards globally, then assign contiguous nc shards to each client
     random.shuffle(shards)
     clients = []
     for i in range(num_clients):
         start = i * nc
         end = (i + 1) * nc
-        # flatten the list of lists into a single list of indices
         client_idxs = [idx for shard in shards[start:end] for idx in shard]
         clients.append(Subset(dataset, client_idxs))
 
     return clients
-
-
-# Usage Example:
-if __name__ == "__main__":
-    cifar_dataset = load_cifar100()
-
-    # IID
-    iid_clients = split_iid(cifar_dataset, num_clients=100)
-
-    # Non-IID with Nc = 5
-    non_iid_clients = split_noniid(cifar_dataset, num_clients=100, nc=5)
-
-    print(f"IID Client 0 size: {len(iid_clients[0])}")
-    print(f"Non-IID Client 0 size: {len(non_iid_clients[0])}")

@@ -19,7 +19,6 @@ class SparseSGDM(SGD):
         mask=None,
         model=None
     ):
-        # Initialize base SGD with momentum, dampening, weight_decay, nesterov
         super(SparseSGDM, self).__init__(
             params,
             lr=lr,
@@ -29,9 +28,6 @@ class SparseSGDM(SGD):
             nesterov=nesterov
         )
 
-        # Build a map from nn.Parameter → mask tensor.
-        # If `mask` is name→tensor and `model` provided, resolve names to params.
-        # Otherwise assume `mask` is already param→tensor.
         if mask is not None:
             if model is not None:
                 param_to_mask = {}
@@ -60,18 +56,14 @@ class SparseSGDM(SGD):
             for p in group['params']:
                 if p.grad is None:
                     continue
-                # Raw gradient
                 d_p = p.grad.data
 
-                # Weight decay regularization
                 if weight_decay != 0:
                     d_p = d_p.add(p.data, alpha=weight_decay)
 
-                # Apply sparse mask to zero-out unwanted gradients
                 if self.mask is not None and p in self.mask:
                     d_p = d_p * self.mask[p]
 
-                # Momentum (and Nesterov) update
                 if momentum != 0:
                     state = self.state[p]
                     if 'momentum_buffer' not in state:
@@ -81,13 +73,10 @@ class SparseSGDM(SGD):
                         buf.mul_(momentum).add_(d_p, alpha=1 - dampening)
 
                     if nesterov:
-                        # Look-ahead: take a step combining current grad and momentum buffer
                         d_p = d_p.mul(1 - dampening).add(buf, alpha=momentum)
                     else:
-                        # Standard heavy-ball momentum
                         d_p = buf
 
-                # Parameter update
                 with torch.no_grad():
                     p.data.add_(d_p, alpha=-lr)
 
