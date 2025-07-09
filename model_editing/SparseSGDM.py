@@ -33,6 +33,8 @@ class SparseSGDM(SGD):
                 for name, param in model.named_parameters():
                     if name in mask:
                         param_to_mask[param] = mask[name]
+                        # Optionally, set a name attribute for debug
+                        param.name = name
                 self.mask = param_to_mask
             else:
                 self.mask = mask
@@ -71,4 +73,12 @@ class SparseSGDM(SGD):
                         d_p = buf
                 with torch.no_grad():
                     p.data.add_(d_p, alpha=-lr)
+                    # 🔒 Enforce mask on weights after update (recommended!)
+                    if self.mask is not None and p in self.mask:
+                        p.data.mul_(self.mask[p])
+                        # Zero out momentum buffer for pruned params (optional but good practice)
+                        if momentum != 0:
+                            buf = self.state[p].get('momentum_buffer', None)
+                            if buf is not None:
+                                buf.mul_(self.mask[p])
         return loss

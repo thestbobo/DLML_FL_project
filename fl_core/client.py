@@ -62,4 +62,18 @@ class Client:
                 self.optimizer.step()
                 if self.scheduler is not None:
                     self.scheduler.step()
+        self.print_optimizer_stats()
         return self.model.state_dict()
+    
+    def print_optimizer_stats(self):
+        print(f"[Client {self.cid}] Optimizer parameter stats:")
+        for i, group in enumerate(self.optimizer.param_groups):
+            for param in group['params']:
+                grad_norm = None
+                if param.grad is not None:
+                    grad_norm = param.grad.abs().mean().item()
+                mask_info = ""
+                pname = getattr(param, 'name', None)
+                if self.mask and pname and pname in self.mask:
+                    mask_info = f" (mask kept: {int(self.mask[pname].sum())}/{self.mask[pname].numel()})"
+                print(f"  shape: {list(param.shape)}, requires_grad: {param.requires_grad}, grad_mean: {grad_norm}{mask_info}")

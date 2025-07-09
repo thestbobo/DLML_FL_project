@@ -26,21 +26,34 @@ def compute_fisher_scores(model, dataloader, criterion, device):
 
     return fisher
 
-def calibrate_mask_global(fisher_scores, target_sparsity):
+def calibrate_mask_global(fisher_scores, target_sparsity, whitelist=None, min_keep_frac=0.5):
     """
-    Prune parameters globally by retaining the lowest Fisher scores until target sparsity is reached.
-    Returns a dict mapping parameter names to binary mask tensors.
+    Args:
+        fisher_scores: dict param_name -> tensor of Fisher scores
+        target_sparsity: global sparsity
+        whitelist: list of substrings. Any param whose name contains one is whitelisted.
+        min_keep_frac: minimum fraction to keep in whitelisted layers
     """
-    # Flatten all Fisher scores into a single vector to determine threshold
     all_scores = torch.cat([f.view(-1) for f in fisher_scores.values()])
     k = int((1 - target_sparsity) * all_scores.numel())
-    if k < 1:
-        threshold = torch.inf
-    else:
-        threshold, _ = torch.kthvalue(all_scores, k)
-    # Create masks: 1 for kept, 0 for pruned
+    threshold = torch.inf if k < 1 else torch.kthvalue(all_scores, k).values.item()
+
     name_mask = {}
     for name, f in fisher_scores.items():
-        mask = (f <= threshold).float()
+        is_whitelisted = any(w in name for w in (whitelist or []))
+        if is_whitelisted:
+            flat = f.view(-1)
+            num_to_keep = int(min_keep_frac * flat.numel())
+            if num_to_keep < 1:
+                num_to_keep = 1
+            if num_to_keep >= flat.numel():
+                mask = torch.ones_like(flat)
+            else:
+                local_threshold = torch.kthvalue(flat, num_to_keep).values.item()
+                mask = (flat <= local_threshold).float()
+            mask = mask.view_as(f)
+        else:
+            mask = (f <= threshold).float()
         name_mask[name] = mask
     return name_mask
+

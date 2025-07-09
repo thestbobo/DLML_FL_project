@@ -63,6 +63,18 @@ def load_checkpoint(model, path):
 def compute_dynamic_sparsity(init_sparsity, final_sparsity, current_round, total_rounds):
     return init_sparsity + (final_sparsity - init_sparsity) * (current_round / total_rounds)
 
+def print_mask_stats(mask_dict):
+    total_params = total_kept = 0
+    print("[MASK STATS]")
+    for name, mask in mask_dict.items():
+        kept = int(mask.sum())
+        total = mask.numel()
+        pct = 100 * kept / total
+        print(f"{name:45s}: kept {kept:7d}/{total:7d} ({pct:5.1f}%)")
+        total_params += total
+        total_kept += kept
+    print(f"Total kept: {total_kept}/{total_params} ({100*total_kept/total_params:.2f}%)")
+
 
 def main():
     # Load config and initialize loggers
@@ -99,6 +111,12 @@ def main():
 
     # Data preparation
     client_datasets = get_client_datasets(config.IID, config.NUM_CLIENTS, config.NC, config.seed)
+    
+    from collections import Counter
+    for i, ds in enumerate(client_datasets):
+        labels = [y for _, y in ds]
+        print(f"Client {i}: {len(ds)} samples, label counts: {Counter(labels)}")
+    
     test_loader = get_test_loader(batch_size=config.BATCH_SIZE)
 
     # Mask preparation (for TaLoS)
@@ -119,14 +137,27 @@ def main():
             print(">>> Calibrating global mask (least sensitive params kept) …")
             shared_masks = calibrate_mask_global(
                 fisher_scores,
-                target_sparsity=config.TALOS_TARGET_SPARSITY
+                target_sparsity=config.TALOS_TARGET_SPARSITY, 
+                whitelist=["classifier", "pos_embed", "patch_embed", "blocks.0.", "blocks.11."],
+                min_keep_frac=0.5
             )
             mask_manager.save_mask(shared_masks, "mask_global.pt")
             del dummy_model, fisher_scores
         else:
             shared_masks = mask_manager.load_mask("mask_global.pt")
         print(f">>> Shared mask ready at {masks_root}")
-
+        
+   
+    # After mask creation
+    print_mask_stats(shared_masks)
+    
+    total, kept = 0, 0
+    for name, mask in shared_masks.items():
+        print(f"{name:40s}: kept {int(mask.sum())}/{mask.numel()} ({100*mask.sum()/mask.numel():.2f}%)")
+        total += mask.numel()
+        kept += int(mask.sum())
+    print(f"Total kept: {kept}/{total} ({100*kept/total:.2f}%)")
+    
     # Federated training loop
     server = Server()
     checkpoint_manager = CheckpointManager(config.OUT_CHECKPOINT_PATH)
