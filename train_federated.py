@@ -358,7 +358,7 @@ def main():
                     lr=lr_round,
                     device=device,
                     warmup_steps=warmup_eps * (cnt // config.BATCH_SIZE),
-                    extract_repr_fn = None
+                    extract_repr_fn = extract_fn
                 )
                 sparsity = None
                 masks = None
