@@ -448,7 +448,15 @@ def main():
             # extract client repr H_i on the same x_probe
             with torch.no_grad():
                 reps_i = get_intermediate_representation(local_model, x_probe, repr_layers, device)
-            H_i = torch.cat([reps_i[name] for name in repr_layers], dim=1)
+
+            # flatten each to (B, features)
+            flattened = []
+            for name in repr_layers:
+                t = reps_i[name]  # e.g. [B, S, D] or [B, D]
+                t_flat = t.reshape(t.shape[0], -1)  # -> [B, S*D] or [B, D]
+                flattened.append(t_flat)
+
+            H_i = torch.cat(flattened, dim=1)
             repr_list.append(H_i.cpu())
 
             # Log this client’s metrics when it was randomly selected
@@ -464,7 +472,11 @@ def main():
         # 1) compute server’s global repr on x_probe
         with torch.no_grad():
             reps_glob = get_intermediate_representation(global_model, x_probe, repr_layers, device)
-        H_glob = torch.cat([reps_glob[name] for name in repr_layers], dim=1)
+
+        flattened_glob = [reps_glob[name].reshape(reps_glob[name].shape[0], -1)
+                          for name in repr_layers]
+
+        H_glob = torch.cat(flattened_glob, dim=1)
         H_glob = H_glob.cpu()
 
         # drift-aware aggregation
