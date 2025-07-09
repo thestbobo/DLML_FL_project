@@ -80,9 +80,10 @@ def main():
 
     method = config.FINETUNE_METHOD.lower()
 
-    masks_root = config.LOAD_MASK
+    masks_root = config.LOAD_MASK 
     need_to_compute_mask = True
     global_fisher_file = os.path.join(config.LOAD_MASK, "fisher_global.pt")
+    out_root = config.MASKS_DIR
     global_mask_file = None
 
     mode = "IID" if config.IID else f"Non-IID Nc={config.NC}"
@@ -142,7 +143,7 @@ def main():
             fisher_loader = None
 
 
-        if global_mask_file is None:
+        if out_root is not None:
             start = time.perf_counter()
             # Compute Fisher scores on the entire dataset
             dummy = copy.deepcopy(global_model).to(device)
