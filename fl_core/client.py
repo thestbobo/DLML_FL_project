@@ -7,8 +7,6 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
 
-from model_editing.TaLoS import calibrate_mask, compute_fisher_scores, calibrate_mask_layerwise_qk
-
 
 def local_train(
     model: nn.Module,
@@ -131,22 +129,10 @@ def local_train_talos(
         # 1) Compute or load Fisher scores (on this client or a separate loader)
         if os.path.exists(fisher_path):
             fisher_scores = torch.load(fisher_path, map_location=device)
-        else:
-            fisher_scores = compute_fisher_scores(model, dataloader, criterion, device)
-            torch.save(fisher_scores, fisher_path)
 
         # 2) Compute or load mask
         if os.path.exists(mask_path):
             masks = torch.load(mask_path, map_location=device)
-        else:
-            keep_ratio = 1.0 - target_sparsity
-            masks = calibrate_mask_layerwise_qk(
-                model,
-                fisher_scores,
-                keep_ratio_per_block=keep_ratio,
-                max_rounds=prune_rounds
-            )
-            torch.save(masks, mask_path)
 
     # 3) Apply mask once before any training begins
     with torch.no_grad():
