@@ -46,7 +46,7 @@ import numpy as np
 # make sure svcca_score is in scope:
 # from utils.your_cca_module import svcca_score
 
-def average_weights_drift_aware(
+def FedAlignAvg(
     weights_list: list[OrderedDict], # list of client model state_dicts
     repr_list: list[torch.Tensor],   # list of client representation tensors (n_i × D)
     num_samples_list: list[int],     # list of client sample counts n_i
