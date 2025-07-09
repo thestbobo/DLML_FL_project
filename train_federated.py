@@ -292,6 +292,25 @@ def main():
         # Select a subset of clients
         selected_clients = np.arange(config.NUM_CLIENTS)
 
+        """ temporarily commented out because we need to extract x_probe every round """
+        # clients_to_extract = []
+        # if t_round % extract_every_n_rounds == 0:
+        #     num_repr_clients = config.REPRESENTATION_CLIENTS_PER_ROUND
+        #     clients_to_extract = list(np.random.choice(
+        #         selected_clients,
+        #         min(num_repr_clients, len(selected_clients)),
+        #         replace=False
+        #     ))
+        #     probe_loader = get_test_loader(batch_size=config.BATCH_SIZE)
+        #     x_probe, _ = next(iter(probe_loader))  # reuse this for all selected clients
+
+        # Always grab a held-out batch for SVCCA probing
+        probe_loader = get_test_loader(batch_size=config.BATCH_SIZE)
+        x_probe, _ = next(iter(probe_loader))
+
+
+
+        # Independently mark which clients to SAVE representations
         clients_to_extract = []
         if t_round % extract_every_n_rounds == 0:
             num_repr_clients = config.REPRESENTATION_CLIENTS_PER_ROUND
@@ -300,8 +319,7 @@ def main():
                 min(num_repr_clients, len(selected_clients)),
                 replace=False
             ))
-            probe_loader = get_test_loader(batch_size=config.BATCH_SIZE)
-            x_probe, _ = next(iter(probe_loader))  # reuse this for all selected clients
+
 
         # Log aggregated class distribution every 5 rounds
         if t_round % 5 == 0:
