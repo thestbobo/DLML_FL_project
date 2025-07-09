@@ -33,9 +33,8 @@ class SparseSGDM(SGD):
                 for name, param in model.named_parameters():
                     if name in mask:
                         param_to_mask[param] = mask[name]
-                        # Optionally, set a name attribute for debug
-                        param.name = name
                 self.mask = param_to_mask
+                self.param_names = {param: name for name, param in model.named_parameters()}
             else:
                 self.mask = mask
         else:
