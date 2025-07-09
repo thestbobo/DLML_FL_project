@@ -60,6 +60,10 @@ def load_checkpoint(model, path):
     print(f"[INFO] Resumed from round {round_num}")
     return round_num
 
+def compute_dynamic_sparsity(init_sparsity, final_sparsity, current_round, total_rounds):
+    return init_sparsity + (final_sparsity - init_sparsity) * (current_round / total_rounds)
+
+
 def main():
     # Load config and initialize loggers
     with open("config/config.yaml", encoding="utf-8") as f:
