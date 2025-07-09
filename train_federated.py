@@ -10,7 +10,7 @@ import re
 from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_global, calibrate_mask_layerwise_qk, calibrate_mask_layerwise_qk_ls
 from models.dino_ViT_s16 import DINO_ViT
 from fl_core.client import local_train, local_train_talos
-from fl_core.server import FedAlignAvg
+from fl_core.server import average_weights_fedavg
 from data.prepare_data_fl import get_client_datasets, get_test_loader
 from project_utils.metrics import get_metrics
 from project_utils.federated_metrics import (
@@ -480,14 +480,8 @@ def main():
         H_glob = H_glob.cpu()
 
         # drift-aware aggregation
-        global_weights = FedAlignAvg(
-            local_weights,
-            repr_list,
-            num_samples_list,
-            H_glob,
-            k=config.SVCCA_K,
-            pca_dim=config.SVCCA_PCA_DIM,
-            max_samples=config.SVCCA_MAX_SAMPLES)
+        global_weights = average_weights_fedavg(local_weights, num_samples_list)
+        log_global_weight_diff(prev_global_weights, global_weights, t_round)
         global_model.load_state_dict(global_weights)
 
         # log global metrics
