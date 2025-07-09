@@ -7,7 +7,7 @@ import yaml
 import wandb
 from torch.utils.data import DataLoader, ConcatDataset, Subset
 import re
-from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_global, calibrate_mask_layerwise_qk, calibrate_mask_layerwise_qk_ls
+from model_editing.TaLoS import TaLoS
 from models.dino_ViT_b16 import DINO_ViT
 from fl_core.client import local_train, local_train_talos
 from fl_core.server import average_weights_fedavg
@@ -183,21 +183,26 @@ def main():
 
             print("\n>>> Preparing mask (TaLoS) …")
             """ Build a global mask (keep least sensitive) """
-            shared_masks = calibrate_mask_global(
-                model=dummy,
-                calib_loader=fisher_loader,
-                criterion=dummy_criterion,
-                device=device,
-                target_sparsity=config.TALOS_TARGET_SPARSITY,
-                rounds=config.TALOS_PRUNE_ROUNDS,
-                random_fallback_frac = 0.1,
-                seed=config.seed,
-                min_keep_frac=0.05,
-                strict_final=False
-            )
+
+            pruner = TaLoS([p for p in dummy.parameters() if p.requires_grad])
+            for round in range(config.TALOS_PRUNE_ROUNDS):
+                target = config.TALOS_TARGET_SPARSITY ** ((round + 1) / config.TALOS_PRUNE_ROUNDS)
+                pruner.score(dummy, torch.nn.CrossEntropyLoss(), fisher_loader, device, 200)
+                pruner.mask(target, mode='global')
+            remaining, total = pruner.stats()
+            print(f"Pruned to {remaining}/{total} ({remaining/total:.2%})")
+            pruner.apply_mask()
+
+            shared_masks = {}
+            for name, param in dummy.named_parameters():
+                # only grab those parameters we actually pruned
+                if param in pruner.masks:
+                    shared_masks[name] = pruner.masks[param].cpu().clone()
+
             total = sum(m.numel() for m in shared_masks.values())
             kept = sum(int(m.sum().item()) for m in shared_masks.values())
             print(f"[DEBUG] GLOBAL MASK → kept {kept}/{total} ≈ {100 * kept / total:.1f}% of all params")
+
 
             torch.save(shared_masks, global_mask_file)
             del dummy, fisher_scores
