@@ -92,7 +92,7 @@ if __name__ == "__main__":
                             score = svcca_score(C, G,
                                                 k=20,
                                                 pca_dim=50,
-                                                max_samples=2000, seed=42)
+                                                max_samples=2000)
                         except Exception as e:
                             print(f"[WARNING] Skipping layer={layer} "
                                   f"round={rr} client={cid} due to: {e}")
