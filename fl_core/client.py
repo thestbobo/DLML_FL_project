@@ -31,7 +31,7 @@ def local_train(
     """
     model.to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = SparseSGDM(model.parameters(), lr=lr, momentum=0.9)
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
     # Step‐based warmup scheduler (linear ramp for `warmup_steps` steps)
     if warmup_steps > 0:
