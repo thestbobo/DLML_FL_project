@@ -7,7 +7,7 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
 
 from model_editing.SparseSGDM import SparseSGDM
-from model_editing.TaLoS import calibrate_mask, compute_fisher_scores, calibrate_mask_layerwise_qk
+from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_layerwise_qk
 
 
 def local_train(
@@ -19,6 +19,7 @@ def local_train(
     warmup_steps: int = 20,
     extract_repr_fn=None
 ):
+
     """
     Dense local training for exactly 'local_steps' optimizer updates.
     Args:
@@ -31,6 +32,7 @@ def local_train(
     Returns:
         (state_dict, avg_loss, accuracy)
     """
+
     model.to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
@@ -64,7 +66,6 @@ def local_train(
         if scheduler is not None:
             scheduler.step()
 
-        # Accumulate metrics
         total_loss += loss.item() * labels.size(0)
         total_correct += outputs.argmax(1).eq(labels).sum().item()
         total_samples += labels.size(0)
@@ -88,9 +89,10 @@ def local_train_talos(
     prune_rounds: int,
     masks_dir: str,
     global_masks: dict = None,
-    warmup_steps: int = 20,  # optional, step‐based warmup
+    warmup_steps: int = 20,
     extract_repr_fn=None
 ):
+
     """
     TaLoS local training for exactly 'local_steps' optimizer updates:
       • If global_masks is provided, reuse it; else compute/load it in masks_dir.
@@ -109,6 +111,7 @@ def local_train_talos(
     Returns:
         (state_dict, avg_loss, accuracy, global_sparsity, masks)
     """
+
     model.to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = SparseSGDM(model.parameters(), lr=lr, momentum=0.9)
@@ -133,14 +136,12 @@ def local_train_talos(
     if global_masks is not None:
         masks = global_masks
     else:
-        # 1) Compute or load Fisher scores (on this client or a separate loader)
         if os.path.exists(fisher_path):
             fisher_scores = torch.load(fisher_path, map_location=device)
         else:
             fisher_scores = compute_fisher_scores(model, dataloader, criterion, device)
             torch.save(fisher_scores, fisher_path)
 
-        # 2) Compute or load mask
         if os.path.exists(mask_path):
             masks = torch.load(mask_path, map_location=device)
         else:
@@ -149,17 +150,16 @@ def local_train_talos(
                 model,
                 fisher_scores,
                 keep_ratio_per_block=keep_ratio,
-                max_rounds=prune_rounds
+                max_rounds=prune_rounds,
+                target_qk_sparsity=target_sparsity
             )
             torch.save(masks, mask_path)
 
-    # 3) Apply mask once before any training begins
     with torch.no_grad():
         for name, param in model.named_parameters():
             if name in masks:
                 param.mul_(masks[name].to(param.device))
 
-    # DEBUG: Inspect one block’s weights to ensure they are not all zero
     with torch.no_grad():
         sample_name = f"model.blocks.0.attn.qkv.weight"
         w = model.state_dict()[sample_name]
@@ -188,13 +188,11 @@ def local_train_talos(
         if scheduler is not None:
             scheduler.step()
 
-        # Re‐apply mask immediately
         with torch.no_grad():
             for name, param in model.named_parameters():
                 if name in masks:
                     param.mul_(masks[name].to(param.device))
 
-        # Accumulate metrics
         total_loss += loss.item() * labels.size(0)
         total_correct += outputs.argmax(1).eq(labels).sum().item()
         total_samples += labels.size(0)
@@ -202,7 +200,6 @@ def local_train_talos(
     avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
     accuracy = total_correct / total_samples if total_samples > 0 else 0.0
 
-    # Compute global sparsity
     total_params = 0
     kept_params = 0
     for mask in masks.values():
