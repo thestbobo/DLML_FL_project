@@ -1,30 +1,31 @@
-from collections import OrderedDict
 import torch
+from collections import OrderedDict
+from typing import List, Dict, Any, Optional
 
-
-def average_weights_fedavg(weights_list, num_samples_list):
+class Server:
     """
-    FedAvg: weighted average of model weights based on number of samples per client.
-
-    Args:
-        weights_list (list): List of client model state_dicts.
-        num_samples_list (list): List of number of training samples per client.
-
-    Returns:
-        OrderedDict: Aggregated model weights.
+    Federated learning server. Aggregates model updates using FedAvg.
     """
-    if not weights_list:
-        raise ValueError("weights_list is empty")
-
-    total_samples = sum(num_samples_list)
-    avg_weights = OrderedDict()
-
-    for key in weights_list[0].keys():
-        # Initialize tensor to zeros
-        avg_weights[key] = torch.zeros_like(weights_list[0][key])
-
-        # Weighted sum
-        for weights, num_samples in zip(weights_list, num_samples_list):
-            avg_weights[key] += weights[key] * (num_samples / total_samples)
-
-    return avg_weights
+    @staticmethod
+    def aggregate(updates: List[Dict[str, torch.Tensor]], weights: Optional[List[int]] = None) -> Dict[str, torch.Tensor]:
+        """
+        Performs (weighted) FedAvg aggregation.
+        Args:
+            updates: List of state dicts from clients.
+            weights: List of sample counts per client (for weighted avg). If None, uses simple average.
+        Returns:
+            Aggregated state dict.
+        """
+        if not updates:
+            raise ValueError("No client updates provided.")
+        avg = OrderedDict()
+        keys = updates[0].keys()
+        if weights is None:
+            # Simple average
+            for k in keys:
+                avg[k] = torch.stack([u[k] for u in updates], dim=0).mean(dim=0)
+        else:
+            total = sum(weights)
+            for k in keys:
+                avg[k] = sum(u[k] * (w / total) for u, w in zip(updates, weights))
+        return avg

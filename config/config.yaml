@@ -12,16 +12,16 @@ seed: 42                                              # Random seed for reproduc
 batch_size: 256
 val_split: 0.1
 num_workers: 2
-learning_rate: 0.002805291683751909
-weight_decay: 0.00042327462676463
+learning_rate: 0.001
+weight_decay: 0.0005
 momentum: 0.9579794867057544
 t_max: 50
-epochs: 50
+epochs: 10
 load_checkpoint: False
-checkpoint_path: '/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth' # "/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
+checkpoint_path: '' # "/content/drive/MyDrive/DL_project/checkpoints/checkpoint_35.pth"           # Leave blank "" to train from scratch, or set to "checkpoints/<checkpoint_filename>.pth" to resume
 out_checkpoint_dir: "/content/drive/MyDrive/DL_project/checkpoints"
 # when loading a checkpoint, initialize wandb with run_id and resume="must"
-finetuning_method: "dense"                             # fine-tuning method switch -> "dense" / "lora" / "talos"
+finetuning_method: "dense"                             # fine-tuning method switch -> "dense" / "talos"
 scheduler_type: "cosine"  # Options: "cosine", "plateau", "step", "lambda", "none"
 lambda_decay_rate: 0.95
 
@@ -34,23 +34,11 @@ calib_split: 0.05                       # split of the training data dedicated t
 calib_batch_size: 16                    # for Fisher calibration
 calib_rounds: 5
 
-# LoRA fine-tuning (centralized)
-lora_rank: 8                                                                # dimensionality of the low-rank update matrices (AB)
-lora_alpha: 32                                                              # factor applied to the low-rank update (alpha/r * AB)
-lora_dropout: 0.05                                                          # Dropout probability on the updates
-lora_target_modules:
-  - "qkv"
-  - "proj"
-  # optionally, for adapters in the MLP:
-  # - "mlp.fc1"
-  # - "mlp.fc2"
-
 # --------------------------
 # FEDERATED TRAINING CONFIG
 # --------------------------
 NUM_CLIENTS: 100
 CLIENT_FRACTION: 0.1   # 10% of clients selected each round
-LOCAL_EPOCHS: 0        # no longer used
 LOCAL_STEPS: 16
 BATCH_SIZE: 64
 LR: 0.001
