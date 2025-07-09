@@ -206,7 +206,7 @@ def main():
 
             mask_timer_start = time.perf_counter()
 
-            # Build a layer‐wise Q/K float mask (keep most sensitive)
+            # Build a layer‐wise Q/K float mask (keep least sensitive)
             if config.TALOS_MASK_TYPE == "qk_ms":
                 shared_masks = calibrate_mask_layerwise_qk(
                     dummy,
@@ -216,7 +216,7 @@ def main():
                     max_rounds=config.TALOS_PRUNE_ROUNDS
                 )
 
-            # Build a layer‐wise Q/K float mask (keep least sensitive)
+            # Build a layer‐wise Q/K float mask (keep most sensitive)
             elif config.TALOS_MASK_TYPE == "qk_ls":
                 shared_masks = calibrate_mask_layerwise_qk_ls(
                     model=global_model,
@@ -237,7 +237,6 @@ def main():
                     random_fallback_frac=0.1,
                     seed=config.seed,
                     min_keep_frac=0.05,
-                    strict_final=False
                 )
             else:
                 raise ValueError("Unknown mask type:", config.TALOS_MASK_TYPE)
