@@ -48,7 +48,6 @@ lora_target_modules:
 # --------------------------
 NUM_CLIENTS: 10
 CLIENT_FRACTION: 0.1   # 10% of clients selected each round
-LOCAL_EPOCHS: 0        # no longer used
 LOCAL_STEPS: 8
 BATCH_SIZE: 64
 LR: 0.001
