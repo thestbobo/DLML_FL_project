@@ -100,5 +100,6 @@ if __name__ == "__main__":
                         })
 
     df = pd.DataFrame(rows)
-    df.to_csv("svcca_summary.csv", index=False)
+    dir = os.path.join(default_config["OUT_DUMPER_PATH"], "svcca_summary.csv")
+    df.to_csv(dir, index=False)
     print("Wrote svcca_summary.csv with", len(df), "rows")

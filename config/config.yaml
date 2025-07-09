@@ -82,3 +82,6 @@ REPRESENTATION_LAYERS:
 
 REPRESENTATIONS_PATH: ""                    # where to save representations
 REPRESENTATION_CLIENTS_PER_ROUND: 10        # number of clients to save
+
+# svcca_dumper parameters
+OUT_DUMPER_PATH: ""
