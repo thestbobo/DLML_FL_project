@@ -11,12 +11,7 @@ import re
 from models.dino_ViT_b16 import DINO_ViT
 from data import get_client_datasets, get_test_loader
 from model_editing.mask_manager import MaskManager
-from model_editing.TaLoS import (
-    compute_fisher_scores,
-    calibrate_mask_global,
-    calibrate_mask_layerwise_qk,
-    calibrate_mask_layerwise_qk_ls
-)
+from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_global
 from fl_core.client import Client
 from fl_core.server import Server
 from project_utils.metrics import get_metrics
@@ -105,7 +100,8 @@ def main():
     # Mask preparation (for TaLoS)
     if method == "talos":
         mask_manager = MaskManager(config, global_model, device)
-        need_to_compute_mask = not os.path.exists(config.LOAD_MASK) if config.LOAD_MASK else True
+        mask_file = os.path.join(masks_root, "mask_global.pt")
+        need_to_compute_mask = not os.path.exists(mask_file)
         if need_to_compute_mask:
             print("\n>>> Building calibration loader over full CIFAR-100 training set …")
             full_train_dataset = ConcatDataset(client_datasets)
@@ -114,19 +110,12 @@ def main():
             )
             print("\n>>> Computing Fisher scores …")
             dummy_model = copy.deepcopy(global_model).to(device)
-            fisher_scores = compute_fisher_scores(dummy_model, fisher_loader, torch.nn.CrossEntropyLoss(), device)
-            print(">>> Calibrating global mask …")
+            criterion = torch.nn.CrossEntropyLoss()
+            fisher_scores = compute_fisher_scores(dummy_model, fisher_loader, criterion, device)
+            print(">>> Calibrating global mask (least sensitive params kept) …")
             shared_masks = calibrate_mask_global(
-                model=dummy_model,
-                calib_loader=fisher_loader,
-                criterion=torch.nn.CrossEntropyLoss(),
-                device=device,
-                target_sparsity=config.TALOS_TARGET_SPARSITY,
-                rounds=config.TALOS_PRUNE_ROUNDS,
-                random_fallback_frac=0.1,
-                seed=config.seed,
-                min_keep_frac=0.05,
-                mask_type=config.mask_type
+                fisher_scores,
+                target_sparsity=config.TALOS_TARGET_SPARSITY
             )
             mask_manager.save_mask(shared_masks, "mask_global.pt")
             del dummy_model, fisher_scores

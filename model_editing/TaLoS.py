@@ -1,32 +1,46 @@
 import torch
 
-def compute_fisher_mask(model, dataloader, device, threshold):
+def compute_fisher_scores(model, dataloader, criterion, device):
     """
-    Compute a Fisher-information-based mask for pruning.
-    Args:
-        model: nn.Module
-        dataloader: data loader for samples to use
-        device: torch.device
-        threshold: float, threshold for pruning
-    Returns:
-        mask: dict mapping nn.Parameter to binary mask tensor
+    Compute Fisher information for each parameter by accumulating squared gradients over one pass of the data.
+    Returns a dict mapping parameter names to Fisher scores (tensor).
     """
-    fisher = {p: torch.zeros_like(p, device=device) for p in model.parameters() if p.requires_grad}
     model.eval()
-    for x, y in dataloader:
-        x, y = x.to(device), y.to(device)
+    fisher = {name: torch.zeros_like(param, device=device) for name, param in model.named_parameters() if param.requires_grad}
+    count = 0
+
+    for batch in dataloader:
+        x, y = batch[0].to(device), batch[1].to(device)
         model.zero_grad()
         out = model(x)
-        loss = torch.nn.functional.cross_entropy(out, y)
+        loss = criterion(out, y)
         loss.backward()
-        for p in model.parameters():
-            if p.requires_grad and p.grad is not None:
-                fisher[p] += (p.grad.detach() ** 2)
-    # normalize by dataset size
-    for p in fisher:
-        fisher[p] = fisher[p] / len(dataloader.dataset)
-    # build mask: keep weights with Fisher below threshold (for demo, usually it's the other way)
-    mask = {}
-    for p, f in fisher.items():
-        mask[p] = (f < threshold).float()
-    return mask
+        for name, param in model.named_parameters():
+            if param.requires_grad and param.grad is not None:
+                fisher[name] += (param.grad.detach() ** 2)
+        count += x.size(0)
+
+    # Normalize
+    for name in fisher:
+        fisher[name] = fisher[name] / count
+
+    return fisher
+
+def calibrate_mask_global(fisher_scores, target_sparsity):
+    """
+    Prune parameters globally by retaining the lowest Fisher scores until target sparsity is reached.
+    Returns a dict mapping parameter names to binary mask tensors.
+    """
+    # Flatten all Fisher scores into a single vector to determine threshold
+    all_scores = torch.cat([f.view(-1) for f in fisher_scores.values()])
+    k = int((1 - target_sparsity) * all_scores.numel())
+    if k < 1:
+        threshold = torch.inf
+    else:
+        threshold, _ = torch.kthvalue(all_scores, k)
+    # Create masks: 1 for kept, 0 for pruned
+    name_mask = {}
+    for name, f in fisher_scores.items():
+        mask = (f <= threshold).float()
+        name_mask[name] = mask
+    return name_mask

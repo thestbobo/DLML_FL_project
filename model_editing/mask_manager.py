@@ -1,11 +1,8 @@
 import os
 import torch
+from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_global
 
 class MaskManager:
-    """
-    Handles saving, loading, and computation of global (or local) masks for pruning/sparsity.
-    Used for federated and local sparse training.
-    """
     def __init__(self, config, model, device):
         self.config = config
         self.model = model
@@ -13,26 +10,16 @@ class MaskManager:
         self.mask_dir = config.get('MASKS_DIR', 'masks/')
         os.makedirs(self.mask_dir, exist_ok=True)
 
-    def get_or_create_global_mask(self, client_datasets, mask_generator=None):
-        """
-        Loads a precomputed global mask if it exists, otherwise computes and saves a new mask.
-
-        Args:
-            client_datasets: list of datasets for clients (optional, for mask computation).
-            mask_generator: function(model, client_datasets, device) -> mask dict, optional custom mask generator.
-
-        Returns:
-            dict: name (str) -> torch.Tensor (mask)
-        """
+    def get_or_create_global_mask(self, dataloader, criterion):
         mask_file = os.path.join(self.mask_dir, "mask_global.pt")
         if os.path.exists(mask_file):
             return torch.load(mask_file, map_location=self.device)
-        if mask_generator is not None:
-            mask = mask_generator(self.model, client_datasets, self.device)
-        else:
-            # Default: all ones mask (no pruning)
-            mask = {name: torch.ones_like(param, dtype=torch.float32)
-                    for name, param in self.model.named_parameters()}
+
+        fisher_scores = compute_fisher_scores(self.model, dataloader, criterion, self.device)
+        mask = calibrate_mask_global(
+            fisher_scores,
+            target_sparsity=self.config.TALOS_TARGET_SPARSITY
+        )
         torch.save(mask, mask_file)
         return mask
 
