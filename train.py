@@ -14,7 +14,7 @@ from model_editing.TaLoS import compute_fisher_scores, calibrate_mask
 from model_editing.SparseSGDM import SparseSGDM
 from model_editing.LoRA import LoraConfig, apply_lora, get_lora_params
 
-from models.dino_ViT_b16 import DINO_ViT
+from models.dino_ViT_s16 import DINO_ViT
 from data.prepare_data import get_cifar100_loaders, get_sparse_loaders
 from project_utils.metrics import get_metrics
 

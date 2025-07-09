@@ -1,5 +1,4 @@
 import itertools
-import math
 import os
 
 import torch
