@@ -159,7 +159,7 @@ def main():
                 p.requires_grad = True
 
         # Build optimizer over just LoRA params
-        optimizer = SparseSGDM(
+        optimizer = torch.optim.SGD(
             get_lora_params(model),
             lr=config.learning_rate,
             momentum=config.momentum,

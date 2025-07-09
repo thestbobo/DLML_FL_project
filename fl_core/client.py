@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import LambdaLR
 
+from model_editing.SparseSGDM import SparseSGDM
 from model_editing.TaLoS import calibrate_mask, compute_fisher_scores, calibrate_mask_layerwise_qk
 
 
@@ -110,7 +111,7 @@ def local_train_talos(
     """
     model.to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+    optimizer = SparseSGDM(model.parameters(), lr=lr, momentum=0.9)
 
     # -----DEBUG-----
     print(">>> optimizer lr =", optimizer.param_groups[0]["lr"])
