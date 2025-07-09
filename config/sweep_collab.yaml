@@ -32,4 +32,4 @@ early_terminate:
 
 command:
   - python
-  - train.py
+  - train_centralized.py

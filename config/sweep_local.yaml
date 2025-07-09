@@ -28,4 +28,4 @@ early_terminate:
 
 command:
   - C:\Users\Atabay\PycharmProjects\DLML_FL_project\.venv\Scripts\python.exe
-  - train.py
+  - train_centralized.py
