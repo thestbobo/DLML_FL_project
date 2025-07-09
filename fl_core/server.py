@@ -1,101 +1,123 @@
-import warnings
-from sklearn.decomposition import PCA
-from sklearn.cross_decomposition import CCA
-from sklearn.exceptions import ConvergenceWarning
+import torch
+from collections import OrderedDict
+from typing import List
 
-def svcca_score(X, Y, k=20, pca_dim=50, max_samples=2000):
-    # Subsample global Y down to the same number of rows as client X
-    nX, nY = X.shape[0], Y.shape[0]
+def svcca_score(
+    X: torch.Tensor,
+    Y: torch.Tensor,
+    k: int = 20,
+    pca_dim: int = 50,
+    max_samples: int = 2000,
+    eps: float = 1e-10
+) -> float:
+    """
+    Compute SVCCA score between X and Y using GPU-accelerated PyTorch.
+
+    Args:
+        X: Tensor of shape (n_x, d)
+        Y: Tensor of shape (n_y, d)
+        k: number of CCA components
+        pca_dim: PCA dimensionality
+        max_samples: max number of samples for SVCCA
+        eps: regularization for covariance matrices
+
+    Returns:
+        Mean canonical correlation (float).
+    """
+    device = X.device
+    Y = Y.to(device)
+
+    # Subsample to match row counts
+    nX, nY = X.size(0), Y.size(0)
     if nY > nX:
-        idx = np.random.choice(nY, size=nX, replace=False)
+        idx = torch.randperm(nY, device=device)[:nX]
         Y = Y[idx]
     else:
-        idx = np.random.choice(nX, size=nY, replace=False)
+        idx = torch.randperm(nX, device=device)[:nY]
         X = X[idx]
 
-    n = X.shape[0]
-    # (Optional) further subsample to at most max_samples
+    # Further subsample if too large
+    n = X.size(0)
     if max_samples and n > max_samples:
-        sel = np.random.choice(n, size=max_samples, replace=False)
+        sel = torch.randperm(n, device=device)[:max_samples]
         X = X[sel]
         Y = Y[sel]
 
-    # PCA‐reduce to pca_dim
-    p = min(pca_dim, X.shape[1], Y.shape[1])
-    pcaX = PCA(n_components=p).fit_transform(X)
-    pcaY = PCA(n_components=p).fit_transform(Y)
+    # Center data
+    Xc = X - X.mean(dim=0, keepdim=True)
+    Yc = Y - Y.mean(dim=0, keepdim=True)
 
-    # CCA with higher max_iter and looser tol
+    # PCA reduction via torch.pca_lowrank
+    p = min(pca_dim, Xc.size(1), Yc.size(1))
+    Ux, Sx, Vx = torch.pca_lowrank(Xc, q=p)
+    Uy, Sy, Vy = torch.pca_lowrank(Yc, q=p)
+    Xp = Xc @ Vx[:, :p]
+    Yp = Yc @ Vy[:, :p]
+
+    # CCA via SVD
     comp = min(k, p)
-    cca = CCA(n_components=comp, max_iter=2000, tol=1e-4)
+    # Covariance estimates
+    cov_xx = (Xp.T @ Xp) / (Xp.size(0) - 1) + eps * torch.eye(p, device=device)
+    cov_yy = (Yp.T @ Yp) / (Yp.size(0) - 1) + eps * torch.eye(p, device=device)
+    cov_xy = (Xp.T @ Yp) / (Xp.size(0) - 1)
 
-    # suppress the ConvergenceWarning
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=ConvergenceWarning)
-        Xc, Yc = cca.fit_transform(pcaX, pcaY)
+    def inv_sqrt(mat: torch.Tensor) -> torch.Tensor:
+        vals, vecs = torch.linalg.eigh(mat)
+        inv_sqrt_vals = torch.diag(vals.clamp(min=eps).rsqrt())
+        return vecs @ inv_sqrt_vals @ vecs.T
 
-    corrs = [np.corrcoef(Xc[:, i], Yc[:, i])[0, 1] for i in range(comp)]
-    return float(np.mean(corrs))
+    inv_xx = inv_sqrt(cov_xx)
+    inv_yy = inv_sqrt(cov_yy)
 
-# server.py (or wherever you keep your aggregation logic)
+    M = inv_xx @ cov_xy @ inv_yy
+    _, S_vals, _ = torch.linalg.svd(M)
+    corrs = S_vals[:comp]
+    return corrs.mean().item()
 
-from collections import OrderedDict
-import torch
-import numpy as np
-
-# make sure svcca_score is in scope:
-# from utils.your_cca_module import svcca_score
 
 def FedAlignAvg(
-    weights_list: list[OrderedDict], # list of client model state_dicts
-    repr_list: list[torch.Tensor],   # list of client representation tensors (n_i × D)
-    num_samples_list: list[int],     # list of client sample counts n_i
-    global_repr: torch.Tensor,       # server’s representation tensor (N × D)
-    k: int = 20,                     # max number of CCA components to keep
-    pca_dim: int = 50,               # number of PCA dimensions for preprocessing
-    max_samples: int = 2000,         # upper bound on rows fed into SVCCA
+    weights_list: List[OrderedDict],
+    repr_list: List[torch.Tensor],
+    num_samples_list: List[int],
+    global_repr: torch.Tensor,
+    k: int = 20,
+    pca_dim: int = 50,
+    max_samples: int = 2000
 ) -> OrderedDict:
-
     """
-    Drift-aware FedAvg using your svcca_score.
+    GPU-aware FedAvg aggregated by SVCCA similarity.
 
     Args:
-        weights_list: List of client state_dicts (OrderedDict).
-        repr_list:    List of client representation tensors (shape [n_i, D]).
-        num_samples_list: List of sample counts n_i.
-        global_repr:  Server’s reference repr tensor (shape [N, D]).
-        k, pca_dim, max_samples: passed through to svcca_score.
-
+        weights_list: list of client state_dicts
+        repr_list: list of client repr tensors (n_i × D)
+        num_samples_list: list of sample counts
+        global_repr: server repr tensor (N × D)
+        k, pca_dim, max_samples: SVCCA params
     Returns:
-        OrderedDict of aggregated model weights.
+        Aggregated state_dict
     """
+    # Ensure device consistency
+    device = global_repr.device
+    G = global_repr.to(device)
 
-    K = len(weights_list)
-    if not (K == len(repr_list) == len(num_samples_list)):
-        raise ValueError("weights_list, repr_list, and num_samples_list must all be the same length")
-
-    # 1) Convert global repr to numpy once
-    G_np = global_repr.cpu().numpy()
-
-    # 2) Compute SVCCA similarity scores per client
+    # Compute SVCCA similarities on GPU
     sim_scores = []
     for H in repr_list:
-        H_np = H.cpu().numpy()
-        sim = svcca_score(H_np, G_np, k=k, pca_dim=pca_dim, max_samples=max_samples)
+        H_dev = H.to(device)
+        sim = svcca_score(H_dev, G, k=k, pca_dim=pca_dim, max_samples=max_samples)
         sim_scores.append(sim)
 
-    # 3) Form raw weights α_i ∝ sim_i * n_i
+    # Raw weights ∝ sim_i * n_i
     raw = [s * n for s, n in zip(sim_scores, num_samples_list)]
     total = sum(raw) or 1e-12
     alphas = [r / total for r in raw]
 
-    # 4) Aggregate parameters
+    # Aggregate model weights (stay on CPU or original device)
     avg_weights = OrderedDict()
     for key in weights_list[0].keys():
-        agg = torch.zeros_like(weights_list[0][key])
-        for client_w, α in zip(weights_list, alphas):
-            agg += client_w[key] * α
+        agg = torch.zeros_like(weights_list[0][key], device=weights_list[0][key].device)
+        for client_w, alpha in zip(weights_list, alphas):
+            agg = agg + client_w[key].to(agg.device) * alpha
         avg_weights[key] = agg
 
     return avg_weights
-

@@ -457,7 +457,7 @@ def main():
                 flattened.append(t_flat)
 
             H_i = torch.cat(flattened, dim=1)
-            repr_list.append(H_i.cpu())
+            repr_list.append(H_i)
 
             # Log this client’s metrics when it was randomly selected
             if cid == client_to_log:
@@ -477,7 +477,7 @@ def main():
                           for name in repr_layers]
 
         H_glob = torch.cat(flattened_glob, dim=1)
-        H_glob = H_glob.cpu()
+        H_glob = H_glob.cuda()
 
         # drift-aware aggregation
         global_weights = FedAlignAvg(
