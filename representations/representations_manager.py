@@ -1,6 +1,5 @@
 import os
 import torch
-import numpy as np
 
 
 def get_intermediate_representation(model, x, layer_names, device):

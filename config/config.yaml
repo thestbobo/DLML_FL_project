@@ -71,6 +71,11 @@ LOAD_MASK: ""       # "/content/drive/MyDrive/DL_project/masks_cache/xxx.pt"
 # dataset down sampling fraction
 downsample_frac: 0.1
 
+# svcca parameters
+SVCCA_K: 20             # number of canonical components to keep
+SVCCA_PCA_DIM: 50       # PCA dimension before CCA
+SVCCA_MAX_SAMPLES: 2000 # max rows to subsample for SVCCA
+
 # representations extraction
 REPRESENTATION_FREQ: 5  # how often to extract representations (every n-th round)
 REPRESENTATION_LAYERS:

@@ -10,7 +10,7 @@ import re
 from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_global, calibrate_mask_layerwise_qk, calibrate_mask_layerwise_qk_ls
 from models.dino_ViT_s16 import DINO_ViT
 from fl_core.client import local_train, local_train_talos
-from fl_core.server import average_weights_fedavg
+from fl_core.server import average_weights_drift_aware
 from data.prepare_data_fl import get_client_datasets, get_test_loader
 from project_utils.metrics import get_metrics
 from project_utils.federated_metrics import (
@@ -309,6 +309,7 @@ def main():
 
         prev_global_weights = global_model.state_dict()
         local_weights, num_samples_list = [], []
+        repr_list = []
         client_to_log = np.random.choice(selected_clients)  # pick one client for local‐metrics logging
         lr_round = base_lr * (decay ** (t_round - 1))
 
@@ -357,7 +358,7 @@ def main():
                     lr=lr_round,
                     device=device,
                     warmup_steps=warmup_eps * (cnt // config.BATCH_SIZE),
-                    extract_repr_fn = extract_fn
+                    extract_repr_fn = None
                 )
                 sparsity = None
                 masks = None
@@ -426,6 +427,12 @@ def main():
             local_weights.append(w)
             num_samples_list.append(len(client_datasets[cid]))
 
+            # extract client repr H_i on the same x_probe
+            with torch.no_grad():
+                reps_i = get_intermediate_representation(local_model, x_probe, repr_layers, device)
+            H_i = torch.cat([reps_i[name] for name in repr_layers], dim=1)
+            repr_list.append(H_i.cpu())
+
             # Log this client’s metrics when it was randomly selected
             if cid == client_to_log:
                 log_client_metrics(cid, avg_loss, acc, t_round)
@@ -435,10 +442,26 @@ def main():
                         f"client_{cid}/qk_sparsity": sparsity
                     })
 
-        # FedAvg ang log global metrics
-        global_weights = average_weights_fedavg(local_weights, num_samples_list)
-        log_global_weight_diff(prev_global_weights, global_weights, t_round)
+
+        # 1) compute server’s global repr on x_probe
+        with torch.no_grad():
+            reps_glob = get_intermediate_representation(global_model, x_probe, repr_layers, device)
+        H_glob = torch.cat([reps_glob[name] for name in repr_layers], dim=1)
+        H_glob = H_glob.cpu()
+
+        # drift-aware aggregation
+        global_weights = average_weights_drift_aware(
+            local_weights,
+            repr_list,
+            num_samples_list,
+            H_glob,
+            k=config.SVCCA_K,
+            pca_dim=config.SVCCA_PCA_DIM,
+            max_samples=config.SVCCA_MAX_SAMPLES)
         global_model.load_state_dict(global_weights)
+
+        # log global metrics
+        log_global_weight_diff(prev_global_weights, global_weights, t_round)
 
         # model evaluation
         metrics = evaluate(global_model, test_loader)
