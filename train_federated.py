@@ -1,17 +1,22 @@
+import re
 import os
 import copy
 import time
-import numpy as np
-import torch
 import yaml
+import torch
 import wandb
+import numpy as np
+
 from torch.utils.data import DataLoader, ConcatDataset, Subset
-import re
+
 from model_editing.TaLoS import compute_fisher_scores, calibrate_mask_global, calibrate_mask_layerwise_qk, calibrate_mask_layerwise_qk_ls
 from models.dino_ViT_s16 import DINO_ViT
+
 from fl_core.client import local_train, local_train_talos
 from fl_core.server import FedAlignAvg
+
 from data.prepare_data_fl import get_client_datasets, get_test_loader
+
 from project_utils.metrics import get_metrics
 from project_utils.federated_metrics import (
     log_global_weight_diff,
@@ -20,6 +25,7 @@ from project_utils.federated_metrics import (
     log_global_metrics,
     log_client_metrics,
 )
+
 from representations.representations_manager import get_intermediate_representation, save_representations
 
 
@@ -116,9 +122,8 @@ def main():
 
     method = config.FINETUNE_METHOD.lower()
 
-    # TaLoS only -> manage mask cache paths
+    # manage mask cache paths
     if method == "talos":
-        # pre-computed mask upload from config
         if method == "talos":
             if config.LOAD_MASK:
                 global_mask_file = config.LOAD_MASK
@@ -143,7 +148,6 @@ def main():
     mode = "IID" if config.IID else f"Non-IID Nc={config.NC}"
     print(f"========== Federated Training Start ({mode}) ==========")
 
-    starting_round = 0
     ckpt_path = config.CHECKPOINT_PATH
 
     # building model / loading existing one from config
@@ -217,37 +221,41 @@ def main():
 
             mask_timer_start = time.perf_counter()
 
-            """ Build a layer‐wise Q/K float mask (keep most sensitive) """
-            # shared_masks = calibrate_mask_layerwise_qk(
-            #     dummy,
-            #     fisher_scores,
-            #     keep_ratio_per_block=(1.0 - config.TALOS_TARGET_SPARSITY),
-            #     target_qk_sparsity=config.TALOS_TARGET_SPARSITY,
-            #     max_rounds=config.TALOS_PRUNE_ROUNDS
-            # )
+            # Build a layer‐wise Q/K float mask (keep most sensitive)
+            if config.TALOS_MASK_TYPE == "qk_ms":
+                shared_masks = calibrate_mask_layerwise_qk(
+                    dummy,
+                    fisher_scores,
+                    keep_ratio_per_block=(1.0 - config.TALOS_TARGET_SPARSITY),
+                    target_qk_sparsity=config.TALOS_TARGET_SPARSITY,
+                    max_rounds=config.TALOS_PRUNE_ROUNDS
+                )
 
-            """ Build a layer‐wise Q/K float mask (keep least sensitive) """
-            # shared_masks = calibrate_mask_layerwise_qk_ls(
-            #     model=global_model,
-            #     fisher_scores=fisher_scores,
-            #     target_qk_sparsity=config.TALOS_TARGET_SPARSITY,
-            #     max_rounds=config.TALOS_PRUNE_ROUNDS
-            # )
+            # Build a layer‐wise Q/K float mask (keep least sensitive)
+            elif config.TALOS_MASK_TYPE == "qk_ls":
+                shared_masks = calibrate_mask_layerwise_qk_ls(
+                    model=global_model,
+                    fisher_scores=fisher_scores,
+                    target_qk_sparsity=config.TALOS_TARGET_SPARSITY,
+                    max_rounds=config.TALOS_PRUNE_ROUNDS
+                )
 
-
-            """ Build a global mask (keep least sensitive) """
-            shared_masks = calibrate_mask_global(
-                model=dummy,
-                calib_loader=fisher_loader,
-                criterion=dummy_criterion,
-                device=device,
-                target_sparsity=config.TALOS_TARGET_SPARSITY,
-                rounds=config.TALOS_PRUNE_ROUNDS,
-                random_fallback_frac=0.1,
-                seed=config.seed,
-                min_keep_frac=0.05,
-                strict_final=False
-            )
+            # Build a global mask (keep least sensitive)
+            elif config.TALOS_MASK_TYPE == "global":
+                shared_masks = calibrate_mask_global(
+                    model=dummy,
+                    calib_loader=fisher_loader,
+                    criterion=dummy_criterion,
+                    device=device,
+                    target_sparsity=config.TALOS_TARGET_SPARSITY,
+                    rounds=config.TALOS_PRUNE_ROUNDS,
+                    random_fallback_frac=0.1,
+                    seed=config.seed,
+                    min_keep_frac=0.05,
+                    strict_final=False
+                )
+            else:
+                raise ValueError("Unknown mask type:", config.TALOS_MASK_TYPE)
 
             mask_timer_end = time.perf_counter()
             wandb.config.mask_runtime_min = (mask_timer_start - mask_timer_end) / 60
@@ -261,8 +269,10 @@ def main():
 
         else:
             # load pre-computed mask
-            fisher_scores = torch.load(global_fisher_file, map_location=device)
             shared_masks = torch.load(global_mask_file, map_location=device)
+
+            # load pre-computed fisher scores (comment out if needed pls)
+            # fisher_scores = torch.load(global_fisher_file, map_location=device)
 
             total = sum(m.numel() for m in shared_masks.values())
             kept = sum(int(m.sum().item()) for m in shared_masks.values())
@@ -292,23 +302,9 @@ def main():
         # Select a subset of clients
         selected_clients = np.arange(config.NUM_CLIENTS)
 
-        """ temporarily commented out because we need to extract x_probe every round """
-        # clients_to_extract = []
-        # if t_round % extract_every_n_rounds == 0:
-        #     num_repr_clients = config.REPRESENTATION_CLIENTS_PER_ROUND
-        #     clients_to_extract = list(np.random.choice(
-        #         selected_clients,
-        #         min(num_repr_clients, len(selected_clients)),
-        #         replace=False
-        #     ))
-        #     probe_loader = get_test_loader(batch_size=config.BATCH_SIZE)
-        #     x_probe, _ = next(iter(probe_loader))  # reuse this for all selected clients
-
         # Always grab a held-out batch for SVCCA probing
         probe_loader = get_test_loader(batch_size=config.BATCH_SIZE)
         x_probe, _ = next(iter(probe_loader))
-
-
 
         # Independently mark which clients to SAVE representations
         clients_to_extract = []
@@ -354,7 +350,6 @@ def main():
                 if cid in clients_to_extract:
                     label_counter = {}
                     for _, label in client_datasets[cid]:
-                        lbl = label.item() if isinstance(label, torch.Tensor) else label
                         label_counter[label] = label_counter.get(label, 0) + 1
 
                     def extract_fn(model_ref=local_model, client_id=cid, round_id=t_round):
@@ -382,7 +377,6 @@ def main():
                 masks = None
 
             elif method == "talos":
-                # ─── Always use the SINGLE precomputed global mask ───
                 w, avg_loss, acc, sparsity, masks = local_train_talos(
                     local_model,
                     loader,
@@ -391,8 +385,8 @@ def main():
                     device=device,
                     target_sparsity=config.TALOS_TARGET_SPARSITY,
                     prune_rounds=config.TALOS_PRUNE_ROUNDS,
-                    masks_dir=masks_root,  # pass the same root where we saved global_mask
-                    global_masks=shared_masks,  # force‐use the precomputed global mask
+                    masks_dir=masks_root,                               # pass the same root where we saved global_mask
+                    global_masks=shared_masks,                          # force‐use the precomputed global mask
                     warmup_steps=warmup_eps * (cnt // config.BATCH_SIZE),
                     extract_repr_fn=extract_fn
                 )
@@ -403,24 +397,19 @@ def main():
                 for name, mask_tensor in masks.items():
                     # look for the fused QKV weight & bias
                     if "attn.qkv.weight" in name:
-                        # weight tensor shape is [3*D, D], but only first 2/3 of rows (Q & K) count
                         D_out, D_in = mask_tensor.shape
                         chunk = D_out // 3
-                        # sum only over the Q rows and K rows:
                         kept_q = mask_tensor[0:chunk, :].sum().item()
                         kept_k = mask_tensor[chunk:2 * chunk, :].sum().item()
                         qk_kept += (kept_q + kept_k)
-                        # total possible Q + K entries:
                         qk_total += (2 * chunk * D_in)
 
                     if "attn.qkv.bias" in name:
-                        # bias shape is [3*D], first 2/3 are Q‐bias and K‐bias
                         D_out = mask_tensor.numel()
                         chunk = D_out // 3
                         kept_qb = mask_tensor[0:chunk].sum().item()
                         kept_kb = mask_tensor[chunk:2 * chunk].sum().item()
                         qk_kept += (kept_qb + kept_kb)
-                        # total possible Q + K bias entries:
                         qk_total += (2 * chunk)
 
                 # Now compute sparsity = fraction pruned = 1 − (kept / total)
@@ -452,8 +441,8 @@ def main():
             # flatten each to (B, features)
             flattened = []
             for name in repr_layers:
-                t = reps_i[name]  # e.g. [B, S, D] or [B, D]
-                t_flat = t.reshape(t.shape[0], -1)  # -> [B, S*D] or [B, D]
+                t = reps_i[name]
+                t_flat = t.reshape(t.shape[0], -1)
                 flattened.append(t_flat)
 
             H_i = torch.cat(flattened, dim=1)
@@ -469,7 +458,6 @@ def main():
                     })
 
 
-        # 1) compute server’s global repr on x_probe
         with torch.no_grad():
             reps_glob = get_intermediate_representation(global_model, x_probe, repr_layers, device)
 
