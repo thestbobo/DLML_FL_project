@@ -1,5 +1,6 @@
-import glob
 import os
+import glob
+import yaml
 import warnings
 
 import torch
@@ -9,10 +10,9 @@ from sklearn.decomposition import PCA
 from sklearn.cross_decomposition import CCA
 from sklearn.exceptions import ConvergenceWarning
 
-""" takes local saved representations and calculates svcca, dumps the value to a csv file """
-
-# Base directory for your .pt representation files. Change it if you are on the drive
-BASE = r""
+""" 
+takes saved representations and calculates svcca, dumps the values to a csv file
+"""
 
 def load_reps(path_pattern, layer):
     files = glob.glob(path_pattern)
@@ -22,7 +22,6 @@ def load_reps(path_pattern, layer):
         ck = torch.load(fn, map_location="cpu", weights_only=False)
         r = ck["round"]
         mat = ck["representations"][layer].cpu().numpy()
-        # flatten to (n_samples, n_features)
         if mat.ndim > 2:
             mat = mat.reshape(mat.shape[0], -1)
         cid = ck.get("client_id", "global")
@@ -30,7 +29,6 @@ def load_reps(path_pattern, layer):
     return reps
 
 def svcca_score(X, Y, k=20, pca_dim=50, max_samples=2000):
-    # Subsample global Y down to the same number of rows as client X
     nX, nY = X.shape[0], Y.shape[0]
     if nY > nX:
         idx = np.random.choice(nY, size=nX, replace=False)
@@ -40,22 +38,18 @@ def svcca_score(X, Y, k=20, pca_dim=50, max_samples=2000):
         X = X[idx]
 
     n = X.shape[0]
-    # (Optional) further subsample to at most max_samples
     if max_samples and n > max_samples:
         sel = np.random.choice(n, size=max_samples, replace=False)
         X = X[sel]
         Y = Y[sel]
 
-    # PCA‐reduce to pca_dim
     p = min(pca_dim, X.shape[1], Y.shape[1])
     pcaX = PCA(n_components=p).fit_transform(X)
     pcaY = PCA(n_components=p).fit_transform(Y)
 
-    # CCA with higher max_iter and looser tol
     comp = min(k, p)
     cca = CCA(n_components=comp, max_iter=2000, tol=1e-4)
 
-    # suppress the ConvergenceWarning
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=ConvergenceWarning)
         Xc, Yc = cca.fit_transform(pcaX, pcaY)
@@ -64,21 +58,22 @@ def svcca_score(X, Y, k=20, pca_dim=50, max_samples=2000):
     return float(np.mean(corrs))
 
 if __name__ == "__main__":
-    layers = [
-        "model.blocks.3.attn.qkv",
-        "model.blocks.6.mlp.fc2",
-        "model.blocks.11.attn.qkv",
-    ]
+
+    with open("config/config.yaml", encoding="utf-8") as f:
+        default_config = yaml.safe_load(f)
+
+    reps_dir = default_config["REPRESENTATIONS_PATH"]
+    layers = default_config["REPRESENTATION_LAYERS"]
     rows = []
 
     for layer in layers:
         for num_client in range(10):
             for rnd in range(5, 51, 5):
                 client_pattern = os.path.join(
-                    BASE, f"client{num_client}_round{rnd}.pt"
+                    reps_dir, f"client{num_client}_round{rnd}.pt"
                 )
                 global_pattern = os.path.join(
-                    BASE, f"clientglobal_round{rnd}.pt"
+                    reps_dir, f"clientglobal_round{rnd}.pt"
                 )
 
                 client_reps = load_reps(client_pattern, layer)
