@@ -3,9 +3,7 @@ import torch
 
 
 def get_intermediate_representation(model, x, layer_names, device):
-    """
-    Return a dict of {layer_name: representation} for given input batch x.
-    """
+
     model.eval().to(device)
     outputs = {}
     handles = []
